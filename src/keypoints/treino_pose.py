@@ -10,6 +10,106 @@ from ultralytics import YOLO
 from ..util.io_arquivos import garantir_diretorio, ler_yaml
 from ..util.contratos import LISTA_KEYPOINTS_ORDENADA
 
+def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
+    """
+    _ler_metricas_csv: Lê o arquivo results.csv gerado pelo YOLO e retorna as métricas da última época.
+
+    Args:
+        csv_path (Path): Caminho do arquivo results.csv gerado pelo YOLO.
+        fold_idx (int): Índice do fold (1-based) para identificação na tabela.
+
+    Returns:
+        Dict[str, Any]: Dicionário com métricas (Box_mAP50, Box_mAP50-95, Pose_mAP50, Pose_mAP50-95).
+        Retorna dicionário vazio se falhar a leitura ou arquivo não existir.
+    """
+    if not csv_path.exists():
+        return {}
+    
+    import csv
+    
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.reader(f)
+            header = next(reader) # Pular cabeçalho
+            # header geralmente tem nomes com espaços, ex: " metrics/mAP50(B)"
+            header = [h.strip() for h in header]
+            
+            last_row = None
+            for row in reader:
+                last_row = row
+                
+            if not last_row:
+                return {}
+            
+            def get_val(name):
+                if name in header:
+                    idx = header.index(name)
+                    return float(last_row[idx].strip())
+                return 0.0
+
+            epoch = int(last_row[0].strip())
+            
+            return {
+                "Fold": fold_idx,
+                "Epochs": epoch,
+                "Box_mAP50": get_val("metrics/mAP50(B)"),
+                "Box_mAP50-95": get_val("metrics/mAP50-95(B)"),
+                "Pose_mAP50": get_val("metrics/mAP50(P)"),
+                "Pose_mAP50-95": get_val("metrics/mAP50-95(P)"),
+            }
+            
+    except Exception as e:
+        print(f"Erro ao ler CSV {csv_path}: {e}")
+        return {}
+
+def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.Logger):
+    """
+    _imprimir_tabela_resumo: Imprime uma tabela formatada com os resultados dos folds.
+
+    Args:
+        metrics_list (List[Dict[str, Any]]): Lista de dicionários com métricas de cada fold.
+        logger (logging.Logger): Logger para imprimir a tabela.
+
+    Returns:
+        None
+    """
+    if not metrics_list:
+        return
+
+    # Cabeçalho
+    logger.info("\n" + "="*80)
+    logger.info(f"{'Fold':^6} | {'Epocas':^8} | {'Box mAP50':^12} | {'Box mAP50-95':^14} | {'Pose mAP50':^12} | {'Pose mAP50-95':^15}")
+    logger.info("-" * 80)
+    
+    # Linhas
+    soma_box_50 = 0
+    soma_box_95 = 0
+    soma_pose_50 = 0
+    soma_pose_95 = 0
+    
+    count = len(metrics_list)
+    
+    for m in metrics_list:
+        logger.info(f"{m['Fold']:^6} | {m['Epochs']:^8} | {m['Box_mAP50']:^12.4f} | {m['Box_mAP50-95']:^14.4f} | {m['Pose_mAP50']:^12.4f} | {m['Pose_mAP50-95']:^15.4f}")
+        
+        soma_box_50 += m['Box_mAP50']
+        soma_box_95 += m['Box_mAP50-95']
+        soma_pose_50 += m['Pose_mAP50']
+        soma_pose_95 += m['Pose_mAP50-95']
+        
+    logger.info("-" * 80)
+    
+    # Média
+    if count > 0:
+        avg_box_50 = soma_box_50 / count
+        avg_box_95 = soma_box_95 / count
+        avg_pose_50 = soma_pose_50 / count
+        avg_pose_95 = soma_pose_95 / count
+        
+        logger.info(f"{'MEDIA':^6} | {'-':^8} | {avg_box_50:^12.4f} | {avg_box_95:^14.4f} | {avg_pose_50:^12.4f} | {avg_pose_95:^15.4f}")
+    
+    logger.info("="*80 + "\n")
+
 def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.Logger) -> Path:
     """
     treinar_modelo_pose: Executa o treinamento do modelo YOLOv8 Pose.
