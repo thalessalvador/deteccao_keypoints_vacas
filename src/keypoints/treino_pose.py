@@ -36,18 +36,27 @@ def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
             
             last_row = None
             for row in reader:
-                last_row = row
+                if row: # evitar linhas vazias
+                    last_row = row
                 
             if not last_row:
                 return {}
             
             def get_val(name):
-                if name in header:
-                    idx = header.index(name)
-                    return float(last_row[idx].strip())
+                # Tenta encontrar correspondencia exata após strip
+                name_clean = name.strip()
+                if name_clean in header:
+                    idx = header.index(name_clean)
+                    try:
+                        return float(last_row[idx].strip())
+                    except ValueError:
+                        return 0.0
                 return 0.0
 
-            epoch = int(last_row[0].strip())
+            try:
+                epoch = int(last_row[0].strip())
+            except ValueError:
+                epoch = 0
             
             return {
                 "Fold": fold_idx,
@@ -152,7 +161,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
     logger.info(f"Iniciando treino. Dataset: {len(image_files)} imagens. K-Folds: {k_folds}")
     
     # Preparar diretório de runs
-    runs_dir = Path("modelos/pose/runs")
+    runs_dir = Path("modelos/pose/runs").resolve()
     runs_dir.mkdir(parents=True, exist_ok=True)
     
     # Se K=1, treino simples (sem split complexo, usa tudo ou split automatico do YOLO se definido val)
@@ -172,6 +181,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         # K-Fold Cross Validation
         kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
         best_model_path = None
+        best_map_pose = -1.0
         
         fold_metrics = []
 
@@ -191,17 +201,37 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
             
             # Treinar
             final_model = _executar_yolo(model_name, yaml_fold, epochs, imgsz, batch, device, project_dir, logger, patience)
-            best_model_path = final_model # Guarda o último
             
             # Coletar métricas do results.csv
             metrics = _ler_metricas_csv(project_dir / "results.csv", fold_idx)
             if metrics:
                 fold_metrics.append(metrics)
+                
+                # Verifica se é o melhor modelo até agora (baseado em Pose mAP50-95)
+                # Se não tiver Pose metrics (ex: dataset só bbox), usa Box mAP50-95
+                current_map = metrics.get("Pose_mAP50-95", 0.0)
+                if current_map == 0.0:
+                     current_map = metrics.get("Box_mAP50-95", 0.0)
+                     
+                logger.info(f"Fold {fold_idx} mAP50-95: {current_map:.4f}")
+                
+                if current_map > best_map_pose:
+                    best_map_pose = current_map
+                    best_model_path = final_model
+                    logger.info(f"Novo melhor modelo detectado: Fold {fold_idx}")
+            else:
+                 # Fallback se não conseguir ler métricas: assume o último como best se ainda n tinha
+                 if best_model_path is None:
+                     best_model_path = final_model
             
         logger.info("K-Fold concluído.")
         _imprimir_tabela_resumo(fold_metrics, logger)
         
+        if best_model_path:
+            logger.info(f"Selecionado o modelo do Fold com melhor mAP ({best_map_pose:.4f}): {best_model_path}")
+        
         return best_model_path
+
 
 def _split_manual(files: List[Path], val_frac: float) -> Any:
     """
@@ -326,87 +356,4 @@ def _executar_yolo(model_name: str, yaml_path: Path, epochs: int, imgsz: int, ba
         raise e
 
 
-    
-    import csv
-    
-    try:
-        with open(csv_path, 'r') as f:
-            reader = csv.reader(f)
-            header = next(reader) # Pular cabeçalho
-            # header geralmente tem nomes com espaços, ex: " metrics/mAP50(B)"
-            header = [h.strip() for h in header]
-            
-            last_row = None
-            for row in reader:
-                last_row = row
-                
-            if not last_row:
-                return {}
-            
-            # Mapear índices
-            # Indices típicos no YOLOv8 Pose:
-            # 0: epoch, ...
-            # metrics/mAP50(B): index X
-            # metrics/mAP50-95(B): index Y
-            # metrics/mAP50(P): index Z
-            # metrics/mAP50-95(P): index W
-            
-            def get_val(name):
-                if name in header:
-                    idx = header.index(name)
-                    return float(last_row[idx].strip())
-                return 0.0
 
-            epoch = int(last_row[0].strip())
-            
-            return {
-                "Fold": fold_idx,
-                "Epochs": epoch,
-                "Box_mAP50": get_val("metrics/mAP50(B)"),
-                "Box_mAP50-95": get_val("metrics/mAP50-95(B)"),
-                "Pose_mAP50": get_val("metrics/mAP50(P)"),
-                "Pose_mAP50-95": get_val("metrics/mAP50-95(P)"),
-            }
-            
-    except Exception as e:
-        print(f"Erro ao ler CSV {csv_path}: {e}")
-        return {}
-
-def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.Logger):
-    """Imprime uma tabela formatada com os resultados dos folds."""
-    if not metrics_list:
-        return
-
-    # Cabeçalho
-    logger.info("\n" + "="*80)
-    logger.info(f"{'Fold':^6} | {'Epocas':^8} | {'Box mAP50':^12} | {'Box mAP50-95':^14} | {'Pose mAP50':^12} | {'Pose mAP50-95':^15}")
-    logger.info("-" * 80)
-    
-    # Linhas
-    soma_box_50 = 0
-    soma_box_95 = 0
-    soma_pose_50 = 0
-    soma_pose_95 = 0
-    
-    count = len(metrics_list)
-    
-    for m in metrics_list:
-        logger.info(f"{m['Fold']:^6} | {m['Epochs']:^8} | {m['Box_mAP50']:^12.4f} | {m['Box_mAP50-95']:^14.4f} | {m['Pose_mAP50']:^12.4f} | {m['Pose_mAP50-95']:^15.4f}")
-        
-        soma_box_50 += m['Box_mAP50']
-        soma_box_95 += m['Box_mAP50-95']
-        soma_pose_50 += m['Pose_mAP50']
-        soma_pose_95 += m['Pose_mAP50-95']
-        
-    logger.info("-" * 80)
-    
-    # Média
-    if count > 0:
-        avg_box_50 = soma_box_50 / count
-        avg_box_95 = soma_box_95 / count
-        avg_pose_50 = soma_pose_50 / count
-        avg_pose_95 = soma_pose_95 / count
-        
-        logger.info(f"{'MEDIA':^6} | {'-':^8} | {avg_box_50:^12.4f} | {avg_box_95:^14.4f} | {avg_pose_50:^12.4f} | {avg_pose_95:^15.4f}")
-    
-    logger.info("="*80 + "\n")
