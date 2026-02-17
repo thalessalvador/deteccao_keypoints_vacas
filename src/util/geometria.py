@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from typing import Tuple, Optional, Any
+from typing import Tuple, List, Optional, Any
 from .contratos import Bbox
 
 def calcular_distancia(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
@@ -86,3 +86,36 @@ def calcular_area_bbox(bbox: Bbox) -> float:
     width = max(0.0, bbox["x_max"] - bbox["x_min"])
     height = max(0.0, bbox["y_max"] - bbox["y_min"])
     return width * height
+
+def calcular_area_poligono(vertices: List[Tuple[float, float]]) -> float:
+    """
+    Calcula a área de um polígono arbitrário dado por uma lista ordenada de vértices (x, y)
+    usando a fórmula Shoelace.
+    """
+    n = len(vertices)
+    if n < 3:
+        return 0.0
+        
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += vertices[i][0] * vertices[j][1]
+        area -= vertices[j][0] * vertices[i][1]
+        
+    return abs(area) / 2.0
+
+def calcular_distancia_ponto_reta(p: Tuple[float, float], r1: Tuple[float, float], r2: Tuple[float, float]) -> float:
+    """
+    Calcula a distância perpendicular de um ponto P à reta definida por R1 e R2.
+    """
+    # Se r1 == r2, distância é ponto a ponto
+    if r1 == r2:
+        return calcular_distancia(p, r1)
+        
+    # Numerador: |(r2.y - r1.y)*p.x - (r2.x - r1.x)*p.y + r2.x*r1.y - r2.y*r1.x|
+    # Denominador: sqrt((r2.y - r1.y)^2 + (r2.x - r1.x)^2)
+    
+    num = abs((r2[1] - r1[1]) * p[0] - (r2[0] - r1[0]) * p[1] + r2[0] * r1[1] - r2[1] * r1[0])
+    den = math.sqrt((r2[1] - r1[1])**2 + (r2[0] - r1[0])**2)
+    
+    return num / den

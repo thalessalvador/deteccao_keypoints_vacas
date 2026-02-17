@@ -9,6 +9,9 @@ from .keypoints.parser_label_studio import carregar_anotacoes_label_studio
 from .keypoints.conversor_yolo_pose import converter_para_yolo_pose, gerar_dataset_yaml_ultralytics
 from .keypoints.treino_pose import treinar_modelo_pose
 from .keypoints.inferencia_pose import inferir_keypoints_em_imagem
+from .classificacao.gerador_dataset_features import gerar_dataset_features
+from .classificacao.treino_classificador import treinar_classificador
+from .classificacao.avaliacao_classificador import avaliar_classificador
 
 def main():
     """
@@ -33,6 +36,21 @@ def main():
     cmd_inf.add_argument("--imagem", type=str, required=True, help="Imagem para inferência")
     cmd_inf.add_argument("--desenhar", action="store_true", help="Salvar imagem com plot")
     
+    # 5. Gerar Features
+    cmd_feats = subparsers.add_parser("gerar-features", help="Gera features geométricas para classificação")
+
+    # 6. Treinar Classificador
+    cmd_train_cls = subparsers.add_parser("treinar-classificador", help="Treina classificador (XGBoost)")
+
+    # 7. Avaliar Classificador
+    cmd_eval_cls = subparsers.add_parser("avaliar-classificador", help="Avalia classificador (Matriz Confusão)")
+
+    # 8. Classificar Imagem Única
+    cmd_cls_img = subparsers.add_parser("classificar-imagem", help="Classifica uma imagem única (End-to-End)")
+    cmd_cls_img.add_argument("--imagem", type=str, required=True, help="Caminho da imagem")
+    cmd_cls_img.add_argument("--top-k", type=int, default=3, help="Número de predições")
+    cmd_cls_img.add_argument("--desenhar", action="store_true", help="Salvar imagem com predição")
+
     # 9. Pipeline Completo
     cmd_pipe = subparsers.add_parser("pipeline-completo", help="Roda pipeline completo")
 
@@ -55,15 +73,46 @@ def main():
         
     elif args.comando == "inferir-pose":
         run_inferir_pose(config, args.imagem, args.desenhar, logger)
+    
+    elif args.comando == "gerar-features":
+        run_gerar_features(config, logger)
         
+    elif args.comando == "treinar-classificador":
+        run_treinar_classificador(config, logger)
+
+    elif args.comando == "avaliar-classificador":
+        run_avaliar_classificador(config, logger)
+
+    elif args.comando == "classificar-imagem":
+        run_classificar_imagem(config, args.imagem, args.top_k, args.desenhar, logger)
+
     elif args.comando == "pipeline-completo":
         logger.info("Iniciando Pipeline Completo...")
         run_preprocessar_pose(config, logger)
         model_path = run_treinar_pose(config, logger)
-        # TODO: Fases 2 e 3
+        
+        # Fase 2
+        run_gerar_features(config, logger)
+        
+        # Fase 3
+        run_treinar_classificador(config, logger)
+        run_avaliar_classificador(config, logger)
         
     else:
         parser.print_help()
+
+def run_treinar_classificador(config: dict, logger: logging.Logger) -> Path:
+    """
+    run_treinar_classificador: Executa a etapa de treinamento do classificador (Fase 3).
+    """
+    return treinar_classificador(config, logger)
+
+def run_avaliar_classificador(config: dict, logger: logging.Logger):
+    """
+    run_avaliar_classificador: Executa a avaliação do classificador (Fase 3).
+    """
+    avaliar_classificador(config, logger)
+
 
 def run_preprocessar_pose(config: dict, logger: logging.Logger):
     """
@@ -142,10 +191,49 @@ def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: lo
         
     dir_saida = Path(config["paths"]["outputs"]) / "inferencias" / "imagens_plotadas"
     
+    if desenhar:
+        dir_saida.mkdir(parents=True, exist_ok=True)
+        img_saida = dir_saida / img_path.name
+        
     resultado = inferir_keypoints_em_imagem(img_path, Path(model_path), config, desenhar, dir_saida, logger)
+    
+    if desenhar:
+        logger.info(f"Inferência concluída. Imagem com plot salva em: {dir_saida / img_path.name}")
     
     import json
     print(json.dumps(resultado, default=str, indent=2))
 
+def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
+    """
+    run_gerar_features: Executa a etapa de geração de features (Fase 2).
+
+    Args:
+        config (dict): Dicionário de configuração.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Path: Caminho do arquivo CSV de features gerado.
+    """
+    logger.info("=== Fase 2: Geração de Features ===")
+    out_csv = gerar_dataset_features(config, logger)
+    return out_csv
+
+def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bool, logger: logging.Logger):
+    """
+    run_classificar_imagem: Executa classificação de uma imagem única.
+    """
+    from .classificacao.inferencia_classificador import classificar_imagem_unica
+    from pathlib import Path
+    import json
+    
+    img_path = Path(img_path)
+    if not img_path.exists():
+        logger.error(f"Imagem não encontrada: {img_path}")
+        return
+
+    resultado = classificar_imagem_unica(config, img_path, top_k, desenhar, logger)
+    print(json.dumps(resultado, default=str, indent=2))
+
 if __name__ == "__main__":
     main()
+

@@ -140,6 +140,45 @@ Principais parâmetros:
 
 ---
 
+## Detalhes das Features Geométricas (Fase 2)
+O sistema extrai um conjunto robusto de features visando invariância a escala, rotação e translação (posição da vaca na imagem).
+
+### 1. Features Básicas (BBox)
+- `bbox_aspect_ratio`: Razão largura/altura do bounding box (forma geral).
+- `bbox_area_norm`: Área do bbox normalizada pela área da imagem (tamanho relativo).
+
+### 2. Razões de Distâncias
+Relações adimensionais entre segmentos corporais, capturando proporções anatômicas independente do zoom:
+- Ex: `razao_dist_hip_hook_up_por_dist_hook_up_pin_up` (Proporção do quadril).
+
+### 3. Ângulos
+Ângulos em graus formados por *trios* de keypoints, essenciais para capturar postura e angulação óssea:
+- Ex: `angulo_hook_up_hip_hook_down` (Abertura pélvica).
+
+### 4. Áreas de Polígonos (Normalizadas)
+Medidas de "volume" de regiões específicas:
+- `area_poligono_pelvico_norm`: Área do trapézio formado pelos ganchos (`hooks`) e pinos (`pins`).
+- `area_triangulo_torax_norm`: Área do triângulo frontal (`withers`, `back`, `hip`).
+
+### 5. Índices de Conformação
+- `indice_robustez`: Largura dos ganchos dividida pelo comprimento do corpo (`withers` -> `tail`).
+- `indice_triangulo_traseiro`: Área do triângulo traseiro relativa ao bbox.
+
+### 6. Curvatura da Coluna
+Indica desvios laterais (escoliose/postura):
+- `desvio_coluna_back_norm`: Distância perpendicular das costas (`back`) em relação à linha reta teórica que liga cernelha à cauda.
+
+### 7. Shape Context (Coordenadas Relativas)
+Transformação geométrica que re-projeta todos os pontos (`sc_*_x`, `sc_*_y`) em um sistema onde:
+- Origem (0,0) é a Cernelha (`withers`).
+- Eixo X é alinhado com a Cauda (`tail_head`).
+Isso elimina o efeito da rotação da vaca na imagem, permitindo usar a "forma" pura.
+
+### 8. Excentricidade (PCA)
+- `pca_excentricidade`: Razão entre os autovalores principais da distribuição de pontos (indica se a vaca é mais "alongada" ou "arredondada").
+
+---
+
 ## Data augmentation (YOLOv8 nativo)
 A Fase 1 utiliza augmentations nativas do Ultralytics/YOLOv8 (sem Albumentations).
 
@@ -190,26 +229,71 @@ Isso reduz overfitting quando `n_estimators` é alto (ex.: 800).
 
 ## Uso via CLI
 
-### Ajuda
+O script `src/cli.py` é o ponto central de execução.
+
+**Nota sobre Configuração:**
+O argumento `--config` é **global e opcional**. Se não informado, usa `config/config.yaml`.
+Para usar outro arquivo, passe-o **antes** do subcomando:
 ```bash
-python -m src.cli --help
+python -m src.cli --config meu_config.yaml <COMANDO>
 ```
 
-### Pipeline completo (até matriz de confusão final)
+### Comandos Disponíveis
+
+#### 1. Pré-processamento (Fase 1)
+Converte anotações do Label Studio (JSON) para formato YOLO Pose e cria `dataset.yaml`:
 ```bash
-python -m src.cli pipeline-completo --config config/config.yaml
+python -m src.cli preprocessar-pose
 ```
 
-### Inferir pose (JSON) e desenhar pontos
+#### 2. Treinar Pose (Fase 1)
+Inicia o treinamento do YOLOv8 Pose (usando k-fold ou split simples definido no config):
 ```bash
-python -m src.cli inferir-pose --config config/config.yaml --imagem CAMINHO_IMAGEM --desenhar
+python -m src.cli treinar-pose
 ```
 
-### Classificar vaca (top-k) e desenhar keypoints
+#### 3. Inferir Pose (Teste Fase 1)
+Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
 ```bash
-python -m src.cli classificar-imagem --config config/config.yaml --imagem CAMINHO_IMAGEM --top-k 5 --desenhar
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar
+```
+*A saída será salva em `saidas/outputs/inferencias/imagens_plotadas`.*
+
+#### 4. Gerar Features (Fase 2)
+Processa todas as imagens de `dataset_classificacao`, extrai keypoints e calcula as features geométricas (CSV):
+```bash
+python -m src.cli gerar-features
 ```
 
+#### 5. Treinar Classificador (Fase 3)
+Treina o modelo XGBoost usando o CSV gerado e salva os artefatos (`xgboost_model.json`, encoder, etc):
+```bash
+python -m src.cli treinar-classificador
+```
+
+#### 7. Avaliar Classificador (Fase 3)
+Avalia o modelo treinado no conjunto de teste (10% isolado por vaca) e gera matriz de confusão:
+```bash
+python -m src.cli avaliar-classificador
+```
+
+#### 8. Classificar Imagem (End-to-End)
+Executa o fluxo completo para uma nova imagem:
+1. Detecta pose (YOLO).
+2. Extrai features.
+3. Classifica (XGBoost).
+```bash
+python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
+```
+*Gera JSON com probabilidades e salva imagem com predição.*
+
+> **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os caminhos relativos (`Classe/Arquivo.ext`) das imagens reservadas para teste.
+
+#### 9. Pipeline Completo
+Executa todas as etapas em sequência (útil para reprodução total):
+```bash
+python -m src.cli pipeline-completo
+```
 ---
 
 ## Saídas e métricas

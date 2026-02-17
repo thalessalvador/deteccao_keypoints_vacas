@@ -227,10 +227,29 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         logger.info("K-Fold concluído.")
         _imprimir_tabela_resumo(fold_metrics, logger)
         
+        # Salvar relatório JSON
+        relatorio = {
+            "folds": fold_metrics,
+            "melhor_modelo": {
+                "path": str(best_model_path) if best_model_path else None,
+                "map50_95": best_map_pose
+            }
+        }
+        
+        relatorio_path = Path("saidas/relatorios/metricas_pose.json").resolve()
+        relatorio_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        import json
+        with open(relatorio_path, 'w', encoding='utf-8') as f:
+            json.dump(relatorio, f, indent=2)
+            
+        logger.info(f"Relatório de métricas salvo em: {relatorio_path}")
+        
         if best_model_path:
             logger.info(f"Selecionado o modelo do Fold com melhor mAP ({best_map_pose:.4f}): {best_model_path}")
         
         return best_model_path
+
 
 
 def _split_manual(files: List[Path], val_frac: float) -> Any:
