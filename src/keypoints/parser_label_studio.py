@@ -95,7 +95,19 @@ def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.
 
 def _processar_item_label_studio(item: Dict[str, Any], arquivo_json: Path, root_dir: Path, logger: logging.Logger) -> Optional[ImagemAnotada]:
     """
-    Adaptação para processar o formato específico onde 'result' está na raiz e 'task' contém metadados.
+    _processar_item_label_studio: Processa um item individual de anotação do Label Studio.
+
+    Adaptação para processar o formato específico onde 'result' está na raiz e 'task' contém metadados,
+    ou o formato lista de tasks.
+
+    Args:
+        item (Dict[str, Any]): Dicionário contendo os dados da anotação.
+        arquivo_json (Path): Caminho do arquivo JSON de origem.
+        root_dir (Path): Diretório raiz do dataset.
+        logger (logging.Logger): Logger.
+
+    Returns:
+        Optional[ImagemAnotada]: Objeto processado ou None se inválido/vazio.
     """
     # Identificar onde estão os resultados e o caminho da imagem
     results = []

@@ -11,6 +11,11 @@ from .keypoints.treino_pose import treinar_modelo_pose
 from .keypoints.inferencia_pose import inferir_keypoints_em_imagem
 
 def main():
+    """
+    main: Ponto de entrada da CLI para o Projeto Vacas.
+    
+    Gerencia os subcomandos e executa o pipeline de pose e classificação.
+    """
     parser = argparse.ArgumentParser(description="CLI Projeto Vacas")
     subparsers = parser.add_subparsers(dest="comando", help="Subcomandos disponíveis")
     
@@ -61,6 +66,15 @@ def main():
         parser.print_help()
 
 def run_preprocessar_pose(config: dict, logger: logging.Logger):
+    """
+    run_preprocessar_pose: Executa a etapa de pré-processamento (Fase 1).
+    
+    Carrega anotações do Label Studio, converte para YOLO Pose e gera dataset.yaml.
+
+    Args:
+        config (dict): Dicionário de configuração.
+        logger (logging.Logger): Logger configurado.
+    """
     logger.info("=== Fase 1: Pré-processamento (Label Studio -> YOLO) ===")
     raw_path = Path(config["paths"]["raw"]) / "dataset_keypoints"
     processed_path = Path(config["paths"]["processed"]) / "yolo_pose"
@@ -78,6 +92,16 @@ def run_preprocessar_pose(config: dict, logger: logging.Logger):
     gerar_dataset_yaml_ultralytics(processed_path, logger)
     
 def run_treinar_pose(config: dict, logger: logging.Logger) -> Path:
+    """
+    run_treinar_pose: Executa a etapa de treinamento do modelo de pose.
+
+    Args:
+        config (dict): Dicionário de configuração.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Path: Caminho do melhor modelo treinado.
+    """
     logger.info("=== Fase 1: Treino YOLO Pose ===")
     processed_path = Path(config["paths"]["processed"]) / "yolo_pose"
     
@@ -86,6 +110,15 @@ def run_treinar_pose(config: dict, logger: logging.Logger) -> Path:
     return best_model
 
 def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: logging.Logger):
+    """
+    run_inferir_pose: Executa inferência de pose em uma imagem única.
+
+    Args:
+        config (dict): Dicionário de configuração.
+        img_path_str (str): Caminho da imagem.
+        desenhar (bool): Flag para gerar imagem com plot.
+        logger (logging.Logger): Logger configurado.
+    """
     logger.info(f"=== Fase 1: Inferência em {img_path_str} ===")
     img_path = Path(img_path_str)
     

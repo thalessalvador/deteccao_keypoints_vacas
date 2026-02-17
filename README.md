@@ -98,8 +98,8 @@ dados/raw/dataset_keypoints/
   <anotador>/
     ...imagens...
     Key_points/
-      1.json
-      2.json
+      1 (arquivo JSON, pode não ter extensão .json)
+      2
       ...
 ```
 - Pode haver múltiplas vacas por imagem.
