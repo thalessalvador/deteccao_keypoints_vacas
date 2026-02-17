@@ -1,10 +1,10 @@
-# Projeto Vacas — Pose (YOLOv8) + Identificação (XGBoost)
+﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost)
 
 ## Visão geral
 Este repositório implementa um pipeline em 3 fases:
 
-1. **Fase 1 — Pose/Keypoints (YOLOv8 Pose)**  
-   Converte anotações do Label Studio em formato YOLOv8 Pose, treina um modelo para detectar **bbox de vaca** e **8 keypoints**, e disponibiliza inferência (JSON e opcionalmente imagem desenhada).
+1. **Fase 1 — Pose/Keypoints (YOLO Pose)**  
+   Converte anotações do Label Studio em formato YOLO Pose, treina um modelo para detectar **bbox de vaca** e **8 keypoints**, e disponibiliza inferência (JSON e opcionalmente imagem desenhada).
 
 2. **Fase 2 — Geração de features (CSV)**  
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
@@ -119,7 +119,7 @@ dados/raw/dataset_classificacao/
 
 ---
 
-## Formato YOLOv8 Pose gerado
+## Formato YOLO Pose gerado
 - Saída: `dados/processados/yolo_pose/images` e `labels`.
 - Uma linha por vaca/instância:
 ```text
@@ -133,6 +133,7 @@ dados/raw/dataset_classificacao/
 Edite `config/config.yaml`.
 
 Principais parâmetros:
+- `pose.model_name` (atual: `yolo26n-pose.pt`)
 - `pose.imgsz`, `pose.batch`, `pose.epochs`, `pose.device`
 - `pose.k_folds`, `pose.estrategia_validacao`
 - `pose.usar_data_augmentation` e `pose.augmentacao`
@@ -179,8 +180,8 @@ Isso elimina o efeito da rotação da vaca na imagem, permitindo usar a "forma" 
 
 ---
 
-## Data augmentation (YOLOv8 nativo)
-A Fase 1 utiliza augmentations nativas do Ultralytics/YOLOv8 (sem Albumentations).
+## Data augmentation (YOLO nativo)
+A Fase 1 utiliza augmentations nativas do Ultralytics/YOLO (sem Albumentations).
 
 ### Política de flip horizontal (`fliplr`)
 - **Padrão:** `fliplr=0.0` (desligado) para evitar efeitos de orientação nos recursos geométricos.
@@ -247,7 +248,7 @@ python -m src.cli preprocessar-pose
 ```
 
 #### 2. Treinar Pose (Fase 1)
-Inicia o treinamento do YOLOv8 Pose (usando k-fold ou split simples definido no config):
+Inicia o treinamento do YOLO Pose (usando k-fold ou split simples definido no config):
 ```bash
 python -m src.cli treinar-pose
 ```
@@ -314,3 +315,7 @@ python -m src.cli pipeline-completo
 
 ## Licença
 Definir conforme necessidade do projeto.
+
+
+
+

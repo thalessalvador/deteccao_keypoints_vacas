@@ -1,6 +1,6 @@
 pose:
   mode: "train" # train, val, predict
-  model_name: "yolov8n-pose.pt" # Pretrained model to start from
+  model_name: "yolo26n-pose.pt" # Pretrained model to start from
   imgsz: 640
   batch: 16
   epochs: 200
