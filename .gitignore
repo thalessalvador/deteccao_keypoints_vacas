@@ -23,3 +23,18 @@ venv/
 # IDEs
 .vscode/
 .idea/
+
+# Modelos e Checkpoints
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.joblib
+*.joblib.dat
+
+# Logs de Treinamento
+runs/
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/
