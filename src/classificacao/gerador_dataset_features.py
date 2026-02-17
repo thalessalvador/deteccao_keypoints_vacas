@@ -13,6 +13,77 @@ from ..util.contratos import NomeKeypoint, LISTA_KEYPOINTS_ORDENADA
 
 # Mapeamento de índices para acesso rápido
 IDX_KP = {nome: i for i, nome in enumerate(LISTA_KEYPOINTS_ORDENADA)}
+ORIGEM_REAL = "real"
+ORIGEM_AUG = "augmentation"
+
+
+def _ler_cfg_augmentacao_keypoints(config: Dict[str, Any]) -> Dict[str, Any]:
+    cls_cfg = config.get("classificacao", {})
+    aug_cfg = cls_cfg.get("augmentacao_keypoints", {})
+
+    deterministic = bool(aug_cfg.get("deterministico", True))
+    seed = int(aug_cfg.get("seed", 42))
+    rng = np.random.default_rng(seed if deterministic else None)
+
+    usar_global = bool(cls_cfg.get("usar_data_augmentation", False))
+    usar_aug = usar_global and bool(aug_cfg.get("habilitar", True))
+
+    return {
+        "habilitar": usar_aug,
+        "n_copias": int(aug_cfg.get("n_copias", 1)),
+        "noise_std_xy": float(aug_cfg.get("noise_std_xy", 0.02)),
+        "conf_min_keypoint": float(aug_cfg.get("conf_min_keypoint", 0.01)),
+        "clip_coords": bool(aug_cfg.get("clip_coords", True)),
+        "deterministico": deterministic,
+        "seed": seed,
+        "rng": rng,
+    }
+
+
+def _gerar_keypoints_com_ruido(
+    kpts: np.ndarray,
+    bbox_info: Optional[Dict[str, float]],
+    img_w: int,
+    img_h: int,
+    cfg_aug: Dict[str, Any],
+) -> Tuple[Optional[np.ndarray], int]:
+    """
+    Gera uma copia augmentada de keypoints aplicando ruido gaussiano em XY.
+    O ruido e aplicado apenas em keypoints com confianca >= conf_min_keypoint.
+    """
+    noise_std_xy = cfg_aug["noise_std_xy"]
+    if noise_std_xy <= 0:
+        return None, 0
+
+    conf_min = cfg_aug["conf_min_keypoint"]
+    vis_mask = kpts[:, 2] >= conf_min
+    n_vis = int(np.sum(vis_mask))
+    if n_vis == 0:
+        return None, 0
+
+    bbox_w = float((bbox_info or {}).get("bbox_w", 0.0))
+    bbox_h = float((bbox_info or {}).get("bbox_h", 0.0))
+    if bbox_w <= 0:
+        bbox_w = float(max(1, img_w))
+    if bbox_h <= 0:
+        bbox_h = float(max(1, img_h))
+
+    sigma_x = bbox_w * noise_std_xy
+    sigma_y = bbox_h * noise_std_xy
+    rng = cfg_aug["rng"]
+
+    kpts_aug = kpts.copy()
+    ruido_x = rng.normal(0.0, sigma_x, size=n_vis)
+    ruido_y = rng.normal(0.0, sigma_y, size=n_vis)
+
+    kpts_aug[vis_mask, 0] = kpts_aug[vis_mask, 0] + ruido_x
+    kpts_aug[vis_mask, 1] = kpts_aug[vis_mask, 1] + ruido_y
+
+    if cfg_aug["clip_coords"]:
+        kpts_aug[:, 0] = np.clip(kpts_aug[:, 0], 0.0, float(max(0, img_w - 1)))
+        kpts_aug[:, 1] = np.clip(kpts_aug[:, 1], 0.0, float(max(0, img_h - 1)))
+
+    return kpts_aug, n_vis
 
 def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Path:
     """
@@ -83,8 +154,16 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
         logger.error(f"Nenhuma classe encontrada em {raw_dir}")
         return Path("")
     
+    splits_dir = Path(config["paths"]["processed"]) / "classificacao" / "splits"
+    all_train, all_test = _criar_splits_por_vaca(raw_dir, 0.1, 42, splits_dir, logger)
+    train_names = {p.name for p in all_train}
+    test_names = {p.name for p in all_test}
+
+    cfg_aug = _ler_cfg_augmentacao_keypoints(config)
     dados_features: List[Dict[str, Any]] = []
     imagens_descartadas: List[Dict[str, Any]] = []
+    total_aug_geradas = 0
+    total_aug_descartadas_sem_kp = 0
     
     logger.info(f"Processando {len(classes_dirs)} classes (vacas)...")
     
@@ -110,15 +189,47 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
                 if normalizar_orient:
                     kpts = _normalizar_orientacao_keypoints(kpts)
                 
-                # Calcular features
-                feats = _calcular_features_geometricas(kpts, instancia_bbox)
-                
-                # Adicionar metadados
-                feats["arquivo"] = img_path.name
-                feats["classe"] = cow_id
-                # feats["target"] = cow_id # Pode ser util num encoding numerico depois
-                
-                dados_features.append(feats)
+                split_instancia = "treino" if img_path.name in train_names else "teste"
+                if img_path.name not in train_names and img_path.name not in test_names:
+                    split_instancia = "desconhecido"
+
+                feats_real = _calcular_features_geometricas(kpts, instancia_bbox)
+                feats_real["arquivo"] = img_path.name
+                feats_real["classe"] = cow_id
+                feats_real["origem_instancia"] = ORIGEM_REAL
+                feats_real["is_aug"] = 0
+                feats_real["aug_id"] = 0
+                feats_real["split_instancia"] = split_instancia
+                dados_features.append(feats_real)
+
+                pode_augment = (
+                    cfg_aug["habilitar"]
+                    and split_instancia == "treino"
+                    and cfg_aug["n_copias"] > 0
+                )
+                if pode_augment:
+                    img_h, img_w = result.orig_shape
+                    for aug_id in range(1, cfg_aug["n_copias"] + 1):
+                        kpts_aug, n_perturbados = _gerar_keypoints_com_ruido(
+                            kpts=kpts,
+                            bbox_info=instancia_bbox,
+                            img_w=int(img_w),
+                            img_h=int(img_h),
+                            cfg_aug=cfg_aug,
+                        )
+                        if kpts_aug is None or n_perturbados == 0:
+                            total_aug_descartadas_sem_kp += 1
+                            continue
+
+                        feats_aug = _calcular_features_geometricas(kpts_aug, instancia_bbox)
+                        feats_aug["arquivo"] = img_path.name
+                        feats_aug["classe"] = cow_id
+                        feats_aug["origem_instancia"] = ORIGEM_AUG
+                        feats_aug["is_aug"] = 1
+                        feats_aug["aug_id"] = int(aug_id)
+                        feats_aug["split_instancia"] = split_instancia
+                        dados_features.append(feats_aug)
+                        total_aug_geradas += 1
                 
             except Exception as e:
                 logger.error(f"Erro ao processar {img_path}: {e}")
@@ -134,10 +245,31 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
         df_descartadas.to_csv(processed_dir / "imagens_descartadas.csv", index=False)
         logger.warning(f"{len(imagens_descartadas)} imagens descartadas. Ver imagens_descartadas.csv")
         
-    # Gerar Splits 90/10 (Spec 10.1)
+    # Splits ja foram gerados no inicio para controlar augmentation somente no treino.
     # O CSV features_completas deve conter TUDO. O split define quem é quem.
-    splits_dir = Path(config["paths"]["processed"]) / "classificacao" / "splits"
-    _criar_splits_por_vaca(raw_dir, 0.1, 42, splits_dir, logger)
+    if not df.empty and "origem_instancia" in df.columns:
+        total_reais = int((df["origem_instancia"] == ORIGEM_REAL).sum())
+        total_aug = int((df["origem_instancia"] == ORIGEM_AUG).sum())
+        treino_reais = int(((df["split_instancia"] == "treino") & (df["origem_instancia"] == ORIGEM_REAL)).sum())
+        treino_aug = int(((df["split_instancia"] == "treino") & (df["origem_instancia"] == ORIGEM_AUG)).sum())
+        teste_reais = int(((df["split_instancia"] == "teste") & (df["origem_instancia"] == ORIGEM_REAL)).sum())
+        teste_aug = int(((df["split_instancia"] == "teste") & (df["origem_instancia"] == ORIGEM_AUG)).sum())
+
+        logger.info(
+            f"Instancias features - total reais: {total_reais} | total augmentation: {total_aug} | total geral: {len(df)}"
+        )
+        logger.info(
+            f"Instancias TREINO - reais: {treino_reais} | augmentation: {treino_aug} | total: {treino_reais + treino_aug}"
+        )
+        logger.info(
+            f"Instancias TESTE - reais: {teste_reais} | augmentation: {teste_aug} | total: {teste_reais + teste_aug}"
+        )
+        if cfg_aug["habilitar"]:
+            logger.info(
+                f"Augmentation keypoints - n_copias: {cfg_aug['n_copias']} | noise_std_xy: {cfg_aug['noise_std_xy']} | "
+                f"deterministico: {cfg_aug['deterministico']} | seed: {cfg_aug['seed']} | "
+                f"geradas: {total_aug_geradas} | descartadas_sem_kp_valido: {total_aug_descartadas_sem_kp}"
+            )
     
     logger.info(f"Features geradas com sucesso: {out_csv} ({len(df)} registros)")
     return out_csv
@@ -173,17 +305,35 @@ def _criar_splits_por_vaca(dir_dataset: Path, split_teste: float, seed: int, dir
             
         all_test.extend(test_files)
         all_train.extend(train_files)
+
+    # Aviso: o pipeline canonico usa apenas nome do arquivo nos splits.
+    # Se houver nomes repetidos em pastas diferentes, isso pode causar ambiguidade.
+    nomes = [p.name for p in (all_train + all_test)]
+    repetidos = len(nomes) - len(set(nomes))
+    if repetidos > 0:
+        logger.warning(
+            f"Foram detectados {repetidos} nomes de arquivo repetidos entre classes. "
+            "Considere padronizar nomes unicos para evitar ambiguidades no split."
+        )
         
-    # Salvar txts (apenas nomes de arquivo ou caminhos relativos? Features tem coluna 'arquivo')
-    # Vamos salvar nomes de arquivo para facilitar join com CSV
+    # Arquivos canônicos usados no pipeline: apenas nome do arquivo
+    # para bater com a coluna 'arquivo' do CSV de features.
     with open(dir_saida / "treino.txt", 'w') as f:
         for p in all_train: 
-            # Salvar caminho relativo: Classe/Arquivo.ext
-            rel_path = p.relative_to(dir_dataset)
-            f.write(f"{rel_path}\n")
+            f.write(f"{p.name}\n")
         
     with open(dir_saida / "teste_10pct.txt", 'w') as f:
         for p in all_test: 
+            f.write(f"{p.name}\n")
+
+    # Arquivos auxiliares para inspeção humana (classe/arquivo).
+    with open(dir_saida / "treino_com_pasta.txt", 'w') as f:
+        for p in all_train:
+            rel_path = p.relative_to(dir_dataset)
+            f.write(f"{rel_path}\n")
+
+    with open(dir_saida / "teste_10pct_com_pasta.txt", 'w') as f:
+        for p in all_test:
             rel_path = p.relative_to(dir_dataset)
             f.write(f"{rel_path}\n")
         
@@ -356,6 +506,17 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     feat["razao_dist_back_hip_por_dist_hip_hook_down"] = calc_ratio("back", "hip", "hip", "hook_down")
     feat["razao_dist_back_hip_por_dist_hip_pin_up"] = calc_ratio("back", "hip", "hip", "pin_up")
     feat["razao_dist_back_hip_por_dist_hip_pin_down"] = calc_ratio("back", "hip", "hip", "pin_down")
+
+    # --- Features adicionais (inspiradas no artigo) ---
+    # Distancias brutas entre pontos-chave
+    feat["dist_hip_tail_head"] = calcular_distancia(get_p("hip"), get_p("tail_head"))
+    feat["dist_tail_head_pin_up"] = calcular_distancia(get_p("tail_head"), get_p("pin_up"))
+    feat["dist_back_hook_up"] = calcular_distancia(get_p("back"), get_p("hook_up"))
+
+    # Razao entre largura na linha dos hooks e largura na linha dos pins
+    largura_hooks = calcular_distancia(get_p("hook_up"), get_p("hook_down"))
+    largura_pins = calcular_distancia(get_p("pin_up"), get_p("pin_down"))
+    feat["razao_largura_hooks_por_largura_pins"] = (largura_hooks / largura_pins) if largura_pins > 0 else 0.0
     
     # --- Ângulos Obrigatórios (Spec 10.4) ---
     def calc_ang(p1, v, p3):
@@ -369,6 +530,7 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     feat["angulo_pin_up_tail_head_pin_down"] = calc_ang("pin_up", "tail_head", "pin_down")
     feat["angulo_pin_up_hip_pin_down"] = calc_ang("pin_up", "hip", "pin_down")
     feat["angulo_hook_up_back_hook_down"] = calc_ang("hook_up", "back", "hook_down")
+    feat["angulo_hook_up_pin_up_tail_head"] = calc_ang("hook_up", "pin_up", "tail_head")
     
     # Recomendadas
     feat["angulo_withers_back_tail_head"] = calc_ang("withers", "back", "tail_head")

@@ -288,7 +288,7 @@ python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --des
 ```
 *Gera JSON com probabilidades e salva imagem com predição.*
 
-> **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os caminhos relativos (`Classe/Arquivo.ext`) das imagens reservadas para teste.
+> **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os **nomes dos arquivos** (`arquivo.jpg`) reservados para teste.
 
 #### 9. Pipeline Completo
 Executa todas as etapas em sequência (útil para reprodução total):
@@ -302,8 +302,17 @@ python -m src.cli pipeline-completo
   - `saidas/relatorios/metricas_pose.json`
 - Classificação:
   - `saidas/relatorios/metricas_classificacao.json`
+  - `saidas/relatorios/metricas_classificacao_treino.json`
   - `saidas/relatorios/matriz_confusao.png`
   - `saidas/relatorios/matriz_confusao.csv`
+  - `saidas/relatorios/metricas_por_classe.png`
+  - `saidas/relatorios/confianca_corretas_vs_incorretas.png`
+  - `saidas/relatorios/cobertura_vs_acuracia.png`
+  - `saidas/relatorios/xgb_curva_mlogloss.png`
+  - `saidas/relatorios/xgb_curva_merror.png`
+  - `saidas/relatorios/xgb_gap_mlogloss.png`
+  - `saidas/relatorios/xgb_gap_merror.png`
+  - `saidas/relatorios/xgb_importancia_gain_topn.png`
 
 ---
 

@@ -170,6 +170,7 @@ def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: lo
     """
     logger.info(f"=== Fase 1: Inferência em {img_path_str} ===")
     img_path = Path(img_path_str)
+    import json
     
     # Pegar modelo do config ou usar padrão treinado/runs (aqui assumindo um path fixo ou placeholder)
     # Tentar pegar do output de treino se existir, ou do config 'model_name' inicial se não tiver treinado ainda (vai baixar)
@@ -177,17 +178,33 @@ def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: lo
     # Vamos procurar em modelos/pose/runs/fold_X/weights/best.pt ou similar.
     # Por simplicidade, vamos tentar o path fixo de um treino 'single' ou 'fold_1'
     
-    # Heuristica de busca do melhor modelo
-    runs_dir = Path("modelos/pose/runs")
-    # Tentar pegar o ultimo modificado
-    candidates = list(runs_dir.rglob("best.pt"))
-    if candidates:
-        # Ordenar por data
-        model_path = sorted(candidates, key=lambda p: p.stat().st_mtime)[-1]
-        logger.info(f"Usando modelo encontrado automaticamente: {model_path}")
-    else:
-        model_path = config["pose"]["model_name"] # Fallback para pretrained base
-        logger.warning(f"Modelo treinado não encontrado. Usando base: {model_path}")
+    # Prioridade de seleção do modelo:
+    # 1) saidas/relatorios/metricas_pose.json -> melhor_modelo.path
+    # 2) último best.pt por data em modelos/pose/runs
+    # 3) pose.model_name do config (pretrained base)
+    runs_dir = Path("modelos/pose/runs").resolve()
+    model_path = None
+
+    try:
+        relatorio_path = Path("saidas/relatorios/metricas_pose.json").resolve()
+        if relatorio_path.exists():
+            with open(relatorio_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                best_model_path = data.get("melhor_modelo", {}).get("path")
+                if best_model_path and Path(best_model_path).exists():
+                    model_path = best_model_path
+                    logger.info(f"Usando melhor modelo treinado (relatorio): {model_path}")
+    except Exception as e:
+        logger.warning(f"Erro ao ler metricas_pose.json: {e}. Tentando fallback por runs.")
+
+    if model_path is None:
+        candidates = list(runs_dir.rglob("best.pt"))
+        if candidates:
+            model_path = str(sorted(candidates, key=lambda p: p.stat().st_mtime)[-1])
+            logger.info(f"Usando modelo encontrado automaticamente (fallback): {model_path}")
+        else:
+            model_path = config["pose"]["model_name"]  # Fallback para pretrained base
+            logger.warning(f"Modelo treinado nao encontrado. Usando base: {model_path}")
         
     dir_saida = Path(config["paths"]["outputs"]) / "inferencias" / "imagens_plotadas"
     
@@ -200,7 +217,6 @@ def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: lo
     if desenhar:
         logger.info(f"Inferência concluída. Imagem com plot salva em: {dir_saida / img_path.name}")
     
-    import json
     print(json.dumps(resultado, default=str, indent=2))
 
 def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
