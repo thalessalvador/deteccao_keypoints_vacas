@@ -1,0 +1,50 @@
+pose:
+  mode: "train" # train, val, predict
+  model_name: "yolov8n-pose.pt" # Pretrained model to start from
+  imgsz: 640
+  batch: 16
+  epochs: 200
+  patience: 50 # Early stopping epochs
+  device: "0" # "cpu" or "0", "1", etc.
+  k_folds: 5
+  estrategia_validacao: "kfold_misturado"   # ou "groupkfold_por_anotador"
+  forcar_diversidade_batch: true
+  usar_data_augmentation: true
+  augmentacao:
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 5.0
+    translate: 0.10
+    scale: 0.50
+    shear: 2.0
+    perspective: 0.0005
+    fliplr: 0.0
+    flipud: 0.0
+    mosaic: 0.7
+    mixup: 0.1
+    erasing: 0.2
+
+classificacao:
+  modelo_padrao: "xgboost"
+  baseline_opcional: "sklearn_rf"
+  normalizar_orientacao: false   # deve ser true se fliplr > 0
+  selecao_instancia:
+    conf_min: 0.4
+    peso_area: 0.5
+    peso_confianca: 0.5
+    bonus_centro: 0.2
+    priorizar_centro: true
+  validacao_interna:
+    habilitar: true
+    fracao: 0.2
+    estratificar: true
+    early_stopping_rounds: 50
+  features:
+    selecionadas: "todas" # ou lista de features
+
+paths:
+  raw: "dados/raw"
+  processed: "dados/processados"
+  models: "modelos"
+  outputs: "saidas"

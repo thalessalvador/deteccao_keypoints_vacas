@@ -1,3 +1,25 @@
-/especificacao_projeto_vacas_v3.md
-/raw
-/README_projeto_vacas_v3.md
+# Documentação específica a ignorar
+especificacao_projeto_vacas_v3.md
+README_projeto_vacas_v3.md
+
+# Dados
+dados/raw/
+dados/processados/
+
+# Modelos
+modelos/
+
+# Saídas e Logs
+saidas/
+*.log
+
+# Ambiente e Cache Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# IDEs
+.vscode/
+.idea/

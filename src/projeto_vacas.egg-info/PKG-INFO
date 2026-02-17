@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: projeto_vacas
+Version: 0.1.0
+Summary: Pipeline de detecção de keypoints e classificação de vacas
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: ultralytics>=8.0.0
+Requires-Dist: opencv-python>=4.8.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: pandas>=2.0.0
+Requires-Dist: scikit-learn>=1.3.0
+Requires-Dist: matplotlib>=3.7.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: xgboost>=2.0.0
+Requires-Dist: types-PyYAML
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: tqdm

@@ -1,0 +1,26 @@
+[project]
+name = "projeto_vacas"
+version = "0.1.0"
+description = "Pipeline de detecção de keypoints e classificação de vacas"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ultralytics>=8.0.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "matplotlib>=3.7.0",
+    "PyYAML>=6.0",
+    "xgboost>=2.0.0",
+    "types-PyYAML",
+    "pydantic>=2.0.0",
+    "tqdm"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
