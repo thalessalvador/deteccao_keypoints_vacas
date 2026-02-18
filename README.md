@@ -360,7 +360,3 @@ python -m src.cli pipeline-completo
 - Seeds configuráveis em `config.yaml`.
 - Logs em `saidas/logs/app.log`.
 
----
-
-## Licença
-Definir conforme necessidade do projeto.
