@@ -90,6 +90,11 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
     logger.info(f"Usando {len(feature_cols)} features: {feature_cols}")
     
     X = df_train[feature_cols].copy()
+    origem_instancia = (
+        df_train["origem_instancia"].astype(str).values
+        if "origem_instancia" in df_train.columns
+        else np.array(["real"] * len(df_train), dtype=object)
+    )
     groups = df_train["arquivo"].astype(str).values
     y_raw = df_train[target_col].copy()
     
@@ -121,19 +126,29 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
     model_type = cls_config.get("modelo_padrao", "xgboost")
     
     if model_type == "xgboost":
-        return _treinar_xgboost(X, y, groups, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
+        return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
     elif model_type == "sklearn_rf":
         return _treinar_rf(X, y, cls_config, models_dir, reports_dir, logger)
     else:
         logger.warning(f"Modelo {model_type} desconhecido. Usando XGBoost.")
-        return _treinar_xgboost(X, y, groups, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
+        return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
 
-def _treinar_xgboost(X, y, groups, config_cls, models_dir, reports_dir, feature_cols, aug_stats, logger):
+def _treinar_xgboost(X, y, groups, origem_instancia, config_cls, models_dir, reports_dir, feature_cols, aug_stats, logger):
     # Split interno para validacao/early stopping (Spec 11.1)
     # Importante: split por grupo (arquivo) evita leakage entre copias augmentadas da mesma imagem.
     val_frac = config_cls.get("validacao_interna", {}).get("fracao", 0.2)
     gss = GroupShuffleSplit(n_splits=1, test_size=val_frac, random_state=42)
     train_idx, val_idx = next(gss.split(X, y, groups=groups))
+    usar_apenas_real_val = bool(config_cls.get("validacao_interna", {}).get("usar_apenas_real", False))
+    if usar_apenas_real_val:
+        val_mask_real = origem_instancia[val_idx] == "real"
+        val_idx_filtrado = val_idx[val_mask_real]
+        if len(val_idx_filtrado) > 0:
+            val_idx = val_idx_filtrado
+            logger.info(f"Validacao interna configurada para usar apenas instancias reais: {len(val_idx)} amostras.")
+        else:
+            logger.warning("validacao_interna.usar_apenas_real=true, mas nenhuma instancia real caiu na validacao. Usando validacao completa.")
+
     X_train = X.iloc[train_idx]
     X_val = X.iloc[val_idx]
     y_train = y[train_idx]

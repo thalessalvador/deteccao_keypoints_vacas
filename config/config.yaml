@@ -7,7 +7,26 @@ pose:
   patience: 50 # Early stopping epochs
   device: "0" # "cpu" or "0", "1", etc.
   k_folds: 5
-  estrategia_validacao: "groupkfold_por_sessao"   # opcoes: kfold_misturado, groupkfold_por_sessao, groupkfold_por_anotador
+  # Estrategias de validacao para treino de pose:
+  # - "kfold_misturado":
+  #   KFold comum com shuffle. Mistura imagens livremente entre folds.
+  #   Mais rapido/simples, mas pode superestimar metricas quando ha imagens muito parecidas
+  #   (mesma sessao/camera) em treino e validacao.
+  #
+  # - "groupkfold_por_sessao":
+  #   GroupKFold agrupando por sessao de captura (data + baia/estacao + camera, inferidos do nome do arquivo).
+  #   Evita vazamento de contexto entre treino e validacao no mesmo fold.
+  #   Recomendado para medir generalizacao real.
+  #
+  # - "groupkfold_por_anotador":
+  #   GroupKFold agrupando por um proxy de "origem/anotador" (prefixo do nome + camera).
+  #   Mais restritivo: separa por origem de anotacao para reduzir viés de anotador/lote.
+  #   Pode reduzir metricas de validacao, mas deixa o teste mais robusto.
+  #
+  # Observacoes:
+  # - Se houver poucos grupos para o numero de folds (k_folds), o pipeline faz fallback para kfold_misturado.
+  # - O valor e lido como texto; qualquer valor iniciando com "groupkfold" ativa logica de GroupKFold.
+  estrategia_validacao: "groupkfold_por_sessao"
   forcar_diversidade_batch: true
   usar_data_augmentation: true
   augmentacao:
@@ -31,8 +50,8 @@ classificacao:
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
     habilitar: true # Ativa augmentation em keypoints (alem da flag global acima)
-    n_copias: 10 # Quantas copias sinteticas gerar por instancia real de treino
-    noise_std_xy: 0.005 # Intensidade do ruido gaussiano em XY (escala relativa ao bbox)
+    n_copias: 9 # Quantas copias sinteticas gerar por instancia real de treino
+    noise_std_xy: 0.004 # Intensidade do ruido gaussiano em XY (escala relativa ao bbox)
     conf_min_keypoint: 0.01 # So aplica ruido em keypoints com confianca >= este valor
     clip_coords: true # Limita coordenadas para dentro da imagem apos ruido
     deterministico: true # Se true, repete exatamente a mesma augmentation entre execucoes
@@ -49,59 +68,61 @@ classificacao:
     fracao: 0.2
     estratificar: true
     early_stopping_rounds: 50
+    usar_apenas_real: true # Se true, validacao interna usa apenas origem_instancia=real
   features:
+    # Ordem de importancia (gain) do ultimo treino com todas as features.
+    # Top 10 ativos; restante comentado para liberar um a um.
     selecionadas:
-      - "sc_back_y"
-      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up"
-      - "angulo_hook_up_pin_up_tail_head"
-      - "dist_tail_head_pin_up"
-      - "bbox_aspect_ratio"
       - "dist_hip_tail_head"
-      - "sc_hook_up_y"
-      - "pca_excentricidade"
-      - "razao_dist_back_hip_por_dist_hip_hook_down"
+      - "dist_tail_head_pin_up"
       - "razao_dist_back_hip_por_dist_hip_hook_up"
+      - "bbox_aspect_ratio"
+      - "pca_excentricidade"
       - "sc_pin_up_y"
-      - "dist_back_hook_up"
+      - "angulo_hook_up_pin_up_tail_head"
+      - "angulo_hook_up_hip_tail_head"
+      - "sc_hook_up_y"
+      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up"
+      - "angulo_hook_up_back_hook_down"
+      - "sc_back_y"
       - "angulo_pin_up_hip_pin_down"
-      - "indice_robustez"
-      - "sc_pin_down_y"
-      # Demais features (comentadas)
-      # - "bbox_area_norm"
-      # - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down"
-      # - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up"
-      # - "razao_dist_hip_hook_up_por_dist_hip_tail_head"
+      - "sc_back_x"
+      - "dist_back_hook_up"
+      - "sc_hip_y"
+      - "area_poligono_pelvico_norm"
+      - "sc_hook_down_y"
+      - "sc_hook_up_x"
+      - "sc_pin_up_x"
+      - "bbox_area_norm"
+      - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down"
+      - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down"
+      - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up"
+      - "razao_dist_hip_hook_up_por_dist_hip_tail_head"
       # - "razao_dist_hip_hook_down_por_dist_hip_tail_head"
       # - "razao_dist_back_hip_por_dist_hip_tail_head"
-      # - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down"
+      # - "razao_dist_back_hip_por_dist_hip_hook_down"
       # - "razao_dist_back_hip_por_dist_hip_pin_up"
       # - "razao_dist_back_hip_por_dist_hip_pin_down"
       # - "razao_largura_hooks_por_largura_pins"
       # - "angulo_hook_up_hip_hook_down"
       # - "angulo_hip_hook_up_pin_up"
       # - "angulo_hip_hook_down_pin_down"
-      # - "angulo_hook_up_hip_tail_head"
       # - "angulo_hook_down_hip_tail_head"
       # - "angulo_pin_up_tail_head_pin_down"
-      # - "angulo_hook_up_back_hook_down"
       # - "angulo_withers_back_tail_head"
-      # - "area_poligono_pelvico_norm"
       # - "area_triangulo_torax_norm"
+      # - "indice_robustez"
       # - "indice_triangulo_traseiro"
       # - "desvio_coluna_back_norm"
       # - "desvio_coluna_hip_norm"
       # - "sc_withers_x"
       # - "sc_withers_y"
-      # - "sc_back_x"
-      # - "sc_hook_up_x"
       # - "sc_hook_down_x"
-      # - "sc_hook_down_y"
       # - "sc_hip_x"
-      # - "sc_hip_y"
       # - "sc_tail_head_x"
       # - "sc_tail_head_y"
-      # - "sc_pin_up_x"
       # - "sc_pin_down_x"
+      # - "sc_pin_down_y"
 
 paths:
   raw: "dados/raw"
