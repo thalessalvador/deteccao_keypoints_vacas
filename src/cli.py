@@ -2,6 +2,8 @@ import argparse
 import sys
 from pathlib import Path
 import logging
+import shutil
+from typing import List
 
 from .util.logging_cfg import configurar_logger
 from .util.io_arquivos import ler_yaml, garantir_diretorio
@@ -12,6 +14,120 @@ from .keypoints.inferencia_pose import inferir_keypoints_em_imagem
 from .classificacao.gerador_dataset_features import gerar_dataset_features
 from .classificacao.treino_classificador import treinar_classificador
 from .classificacao.avaliacao_classificador import avaliar_classificador
+
+
+def _remover_arquivo_ou_pasta(caminho: Path, logger: logging.Logger) -> None:
+    """
+    Remove um arquivo ou diretório se existir.
+
+    Args:
+        caminho (Path): Caminho a remover.
+        logger (logging.Logger): Logger configurado.
+    """
+    try:
+        if not caminho.exists():
+            return
+        if caminho.is_dir():
+            shutil.rmtree(caminho)
+            logger.info(f"Limpeza: diretório removido -> {caminho}")
+        else:
+            caminho.unlink()
+            logger.info(f"Limpeza: arquivo removido -> {caminho}")
+    except Exception as exc:
+        logger.warning(f"Nao foi possivel remover '{caminho}': {exc}")
+
+
+def _remover_por_padroes(base_dir: Path, padroes: List[str], logger: logging.Logger) -> None:
+    """
+    Remove arquivos em um diretório de acordo com padrões glob.
+
+    Args:
+        base_dir (Path): Diretório base para aplicar os padrões.
+        padroes (List[str]): Padrões glob de arquivos.
+        logger (logging.Logger): Logger configurado.
+    """
+    if not base_dir.exists():
+        return
+
+    for padrao in padroes:
+        for arquivo in base_dir.glob(padrao):
+            _remover_arquivo_ou_pasta(arquivo, logger)
+
+
+def _limpar_resultados_subcomando(config: dict, subcomando: str, logger: logging.Logger) -> None:
+    """
+    Limpa artefatos da execução anterior de um subcomando.
+
+    Args:
+        config (dict): Configurações carregadas.
+        subcomando (str): Nome do subcomando da CLI.
+        logger (logging.Logger): Logger configurado.
+    """
+    processed_dir = Path(config["paths"]["processed"])
+    models_dir = Path(config["paths"]["models"])
+    outputs_dir = Path(config["paths"]["outputs"])
+    relatorios_dir = outputs_dir / "relatorios"
+
+    if subcomando == "preprocessar-pose":
+        _remover_arquivo_ou_pasta(processed_dir / "yolo_pose", logger)
+        return
+
+    if subcomando == "treinar-pose":
+        _remover_arquivo_ou_pasta(models_dir / "pose" / "runs", logger)
+        _remover_arquivo_ou_pasta(relatorios_dir / "metricas_pose.json", logger)
+        return
+
+    if subcomando == "gerar-features":
+        _remover_arquivo_ou_pasta(processed_dir / "classificacao" / "features", logger)
+        _remover_arquivo_ou_pasta(processed_dir / "classificacao" / "splits", logger)
+        return
+
+    if subcomando == "treinar-classificador":
+        _remover_arquivo_ou_pasta(models_dir / "classificacao" / "modelos_salvos", logger)
+        _remover_por_padroes(
+            relatorios_dir,
+            [
+                "metricas_classificacao_treino.json",
+                "xgb_*.png",
+                "rf_*.png",
+                "catboost_*.png",
+            ],
+            logger,
+        )
+        return
+
+    if subcomando == "avaliar-classificador":
+        _remover_por_padroes(
+            relatorios_dir,
+            [
+                "matriz_confusao.csv",
+                "matriz_confusao.png",
+                "metricas_por_classe.png",
+                "confianca_corretas_vs_incorretas.png",
+                "cobertura_vs_acuracia.png",
+                "metricas_classificacao.json",
+            ],
+            logger,
+        )
+        return
+
+def _limpar_resultados_pipeline_completo(config: dict, logger: logging.Logger) -> None:
+    """
+    Limpa resultados anteriores das etapas executadas no pipeline completo.
+
+    Args:
+        config (dict): Configurações carregadas.
+        logger (logging.Logger): Logger configurado.
+    """
+    etapas = [
+        "preprocessar-pose",
+        "treinar-pose",
+        "gerar-features",
+        "treinar-classificador",
+        "avaliar-classificador",
+    ]
+    for etapa in etapas:
+        _limpar_resultados_subcomando(config, etapa, logger)
 
 def main() -> None:
     """
@@ -66,21 +182,26 @@ def main() -> None:
     logger = configurar_logger()
     
     if args.comando == "preprocessar-pose":
+        _limpar_resultados_subcomando(config, "preprocessar-pose", logger)
         run_preprocessar_pose(config, logger)
         
     elif args.comando == "treinar-pose":
+        _limpar_resultados_subcomando(config, "treinar-pose", logger)
         run_treinar_pose(config, logger)
         
     elif args.comando == "inferir-pose":
         run_inferir_pose(config, args.imagem, args.desenhar, logger)
     
     elif args.comando == "gerar-features":
+        _limpar_resultados_subcomando(config, "gerar-features", logger)
         run_gerar_features(config, logger)
         
     elif args.comando == "treinar-classificador":
+        _limpar_resultados_subcomando(config, "treinar-classificador", logger)
         run_treinar_classificador(config, logger)
 
     elif args.comando == "avaliar-classificador":
+        _limpar_resultados_subcomando(config, "avaliar-classificador", logger)
         run_avaliar_classificador(config, logger)
 
     elif args.comando == "classificar-imagem":
@@ -88,6 +209,7 @@ def main() -> None:
 
     elif args.comando == "pipeline-completo":
         logger.info("Iniciando Pipeline Completo...")
+        _limpar_resultados_pipeline_completo(config, logger)
         run_preprocessar_pose(config, logger)
         model_path = run_treinar_pose(config, logger)
         
