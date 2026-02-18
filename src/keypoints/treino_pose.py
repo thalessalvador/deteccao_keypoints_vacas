@@ -3,12 +3,89 @@ import torch
 from pathlib import Path
 import shutil
 from typing import Dict, Any, List
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GroupKFold
+import re
 import yaml
 from ultralytics import YOLO
 
 from ..util.io_arquivos import garantir_diretorio, ler_yaml
 from ..util.contratos import LISTA_KEYPOINTS_ORDENADA
+
+def _extrair_grupo_validacao(caminho_imagem: Path, estrategia: str) -> str:
+    """
+    Extrai chave de grupo para GroupKFold a partir do nome da imagem.
+
+    Estrategias:
+    - groupkfold_por_sessao: data + baia + camera
+    - groupkfold_por_anotador: proxy por prefixo + camera
+    """
+    stem = caminho_imagem.stem
+    tokens = stem.split("_")
+    estrategia = (estrategia or "").lower()
+
+    # Padrao 1 (Cows Challenge):
+    # cow_id_YYYY_MM_DD_HH_MM_SS_cam_ID_station_id
+    p1 = re.match(
+        r"^(?P<cow>[^_]+)_(?P<y>\d{4})_(?P<m>\d{2})_(?P<d>\d{2})_(?P<h>\d{2})_(?P<mi>\d{2})_(?P<s>\d{2})_cam_(?P<cam>[^_]+)_(?P<station>.+)$",
+        stem,
+    )
+
+    # Padrao 2a (Cows Challenge):
+    # cam_ID_XX_YYYYMMDDHHMMSS_station_id_cam_ID
+    p2a = re.match(
+        r"^cam_(?P<cam1>[^_]+)_[^_]+_(?P<dt>\d{14})_(?P<station>.+?)_cam_(?P<cam2>[^_]+)$",
+        stem,
+    )
+
+    # Padrao 2b (Cows Challenge):
+    # YYYYMMDD_HHMMSS_station_id_cam_ID
+    p2b = re.match(
+        r"^(?P<date>\d{8})_(?P<time>\d{6})_(?P<station>.+?)_cam_(?P<cam>[^_]+)$",
+        stem,
+    )
+
+    # Fallback usado no dataset atual:
+    # YYYYMMDD_HHMMSS_baiaNN_IPC1
+    p_fb = re.match(
+        r"^(?P<date>\d{8})_(?P<time>\d{6})_(?P<station>[^_]+)_(?P<cam>[^_]+)$",
+        stem,
+    )
+
+    data = "data_desconhecida"
+    station = "station_desconhecida"
+    camera = tokens[-1] if tokens else stem
+    prefixo = tokens[0] if tokens else stem
+
+    if p1:
+        data = f"{p1.group('y')}{p1.group('m')}{p1.group('d')}"
+        station = p1.group("station")
+        camera = p1.group("cam")
+        prefixo = p1.group("cow")
+    elif p2a:
+        data = p2a.group("dt")[:8]
+        station = p2a.group("station")
+        camera = p2a.group("cam2")
+        prefixo = f"cam_{p2a.group('cam1')}"
+    elif p2b:
+        data = p2b.group("date")
+        station = p2b.group("station")
+        camera = p2b.group("cam")
+    elif p_fb:
+        data = p_fb.group("date")
+        station = p_fb.group("station")
+        camera = p_fb.group("cam")
+    else:
+        baia = next((t for t in tokens if t.lower().startswith("baia")), None)
+        if baia:
+            station = baia
+        m_data = re.search(r"(20\d{6})", stem)
+        if m_data:
+            data = m_data.group(1)
+
+    if estrategia == "groupkfold_por_anotador":
+        return f"{prefixo}_{camera}"
+
+    return f"{data}_{station}_{camera}"
 
 def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
     """
@@ -137,6 +214,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
     """
     pose_cfg = config.get("pose", {})
     k_folds = pose_cfg.get("k_folds", 1)
+    estrategia_validacao = pose_cfg.get("estrategia_validacao", "kfold_misturado")
     imgsz = pose_cfg.get("imgsz", 640)
     batch = pose_cfg.get("batch", 16)
     epochs = pose_cfg.get("epochs", 100)
@@ -160,7 +238,10 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         logger.error(f"Nenhuma imagem encontrada em {images_dir}")
         raise FileNotFoundError("Dataset vazio")
 
-    logger.info(f"Iniciando treino. Dataset: {len(image_files)} imagens. K-Folds: {k_folds}")
+    logger.info(
+        f"Iniciando treino. Dataset: {len(image_files)} imagens. "
+        f"K-Folds: {k_folds}. Estrategia validacao: {estrategia_validacao}"
+    )
     
     # Preparar diretÃ³rio de runs
     runs_dir = Path("modelos/pose/runs").resolve()
@@ -181,20 +262,41 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
 
     else:
         # K-Fold Cross Validation
-        kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+        estrategia_norm = str(estrategia_validacao).lower()
+        usar_groupkfold = estrategia_norm.startswith("groupkfold")
+        split_iter = None
+        grupos = None
+        if usar_groupkfold:
+            grupos = [_extrair_grupo_validacao(p, estrategia_norm) for p in image_files]
+            n_grupos = len(set(grupos))
+            logger.info(f"GroupKFold habilitado. Grupos unicos detectados: {n_grupos}")
+            if n_grupos >= k_folds:
+                gkf = GroupKFold(n_splits=k_folds)
+                split_iter = gkf.split(image_files, groups=grupos)
+            else:
+                logger.warning(
+                    f"GroupKFold solicitado, mas ha apenas {n_grupos} grupos para {k_folds} folds. "
+                    "Fallback para KFold misturado."
+                )
+                kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+                split_iter = kf.split(image_files)
+        else:
+            kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+            split_iter = kf.split(image_files)
+
         best_model_path = None
         best_map_pose = -1.0
         
         fold_metrics = []
 
-        for i, (train_index, val_index) in enumerate(kf.split(image_files)):
+        for i, (train_index, val_index) in enumerate(split_iter):
             fold_idx = i + 1
             logger.info(f"=== Iniciando Fold {fold_idx}/{k_folds} ===")
             
             fold_train_files = [image_files[j] for j in train_index]
             fold_val_files = [image_files[j] for j in val_index]
             
-            logger.info(f"Fold {fold_idx}: {len(fold_train_files)} treino, {len(fold_val_files)} validaÃ§Ã£o")
+            logger.info(f"Fold {fold_idx}: {len(fold_train_files)} treino, {len(fold_val_files)} validacao")
             
             # Criar YAML temporÃ¡rio para este fold
             yaml_fold = _criar_yaml_split(dir_yolo, fold_train_files, fold_val_files, f"split_fold_{fold_idx}", logger)

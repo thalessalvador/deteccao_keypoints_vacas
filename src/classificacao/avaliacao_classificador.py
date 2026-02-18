@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
@@ -98,6 +98,8 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger):
     
     # Métricas
     acc = accuracy_score(y_test, preds)
+    prec = precision_score(y_test, preds, average="macro", zero_division=0)
+    rec = recall_score(y_test, preds, average="macro", zero_division=0)
     f1 = f1_score(y_test, preds, average="macro")
     topk_metrics = {}
     for k in (1, 3, 5):
@@ -105,7 +107,10 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger):
         topk_idx = np.argsort(probs, axis=1)[:, ::-1][:, :k_eff]
         topk_ok = np.any(topk_idx == y_test.reshape(-1, 1), axis=1)
         topk_metrics[f"top{k_eff}_accuracy"] = float(np.mean(topk_ok))
-    logger.info(f"RESULTADO FINAL (Teste): Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+    logger.info(
+        f"RESULTADO FINAL (Teste): Acurácia: {acc:.4f}, Precision-Macro: {prec:.4f}, "
+        f"Recall-Macro: {rec:.4f}, F1-Macro: {f1:.4f}"
+    )
     
     # Matriz de Confusão
     cm = confusion_matrix(y_test, preds)

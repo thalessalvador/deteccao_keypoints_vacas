@@ -7,7 +7,7 @@ pose:
   patience: 50 # Early stopping epochs
   device: "0" # "cpu" or "0", "1", etc.
   k_folds: 5
-  estrategia_validacao: "kfold_misturado"   # ou "groupkfold_por_anotador"
+  estrategia_validacao: "groupkfold_por_sessao"   # opcoes: kfold_misturado, groupkfold_por_sessao, groupkfold_por_anotador
   forcar_diversidade_batch: true
   usar_data_augmentation: true
   augmentacao:

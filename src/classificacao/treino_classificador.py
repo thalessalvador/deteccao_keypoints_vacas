@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, StratifiedKFold, GroupShuffleSplit
@@ -199,8 +199,13 @@ def _treinar_xgboost(X, y, groups, config_cls, models_dir, reports_dir, feature_
     # Avaliar no Val interno (só pra log)
     preds = clf.predict(X_val)
     acc = accuracy_score(y_val, preds)
+    prec = precision_score(y_val, preds, average="macro", zero_division=0)
+    rec = recall_score(y_val, preds, average="macro", zero_division=0)
     f1 = f1_score(y_val, preds, average="macro")
-    logger.info(f"Validação Interna - Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+    logger.info(
+        f"Validação Interna - Acurácia: {acc:.4f}, Precision-Macro: {prec:.4f}, "
+        f"Recall-Macro: {rec:.4f}, F1-Macro: {f1:.4f}"
+    )
     
     # Salvar
     model_path = models_dir / "xgboost_model.json"
@@ -400,7 +405,13 @@ def _treinar_rf(X, y, config_cls, models_dir, reports_dir, logger):
     
     preds = clf.predict(X_val)
     acc = accuracy_score(y_val, preds)
-    logger.info(f"RF Validação Interna - Acurácia: {acc:.4f}")
+    prec = precision_score(y_val, preds, average="macro", zero_division=0)
+    rec = recall_score(y_val, preds, average="macro", zero_division=0)
+    f1 = f1_score(y_val, preds, average="macro", zero_division=0)
+    logger.info(
+        f"RF Validação Interna - Acurácia: {acc:.4f}, Precision-Macro: {prec:.4f}, "
+        f"Recall-Macro: {rec:.4f}, F1-Macro: {f1:.4f}"
+    )
     
     model_path = models_dir / "rf_model.joblib"
     joblib.dump(clf, model_path)

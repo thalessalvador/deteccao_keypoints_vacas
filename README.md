@@ -137,7 +137,9 @@ Principais parâmetros:
 - `pose.imgsz`, `pose.batch`, `pose.epochs`, `pose.device`
 - `pose.k_folds`, `pose.estrategia_validacao`
 - `pose.usar_data_augmentation` e `pose.augmentacao`
-- `classificacao.features_selecionadas`, `classificacao.modelo_padrao`
+- `classificacao.modelo_padrao`
+- `classificacao.features.selecionadas`
+- `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
 
 ---
 
@@ -178,6 +180,14 @@ Isso elimina o efeito da rotação da vaca na imagem, permitindo usar a "forma" 
 ### 8. Excentricidade (PCA)
 - `pca_excentricidade`: Razão entre os autovalores principais da distribuição de pontos (indica se a vaca é mais "alongada" ou "arredondada").
 
+### 9. Features adicionais (distâncias/ângulos)
+Incluídas para aproximar variáveis usadas em artigos de conformação:
+- `dist_hip_tail_head`
+- `dist_tail_head_pin_up`
+- `dist_back_hook_up`
+- `razao_largura_hooks_por_largura_pins`
+- `angulo_hook_up_pin_up_tail_head`
+
 ---
 
 ## Data augmentation (YOLO nativo)
@@ -206,6 +216,27 @@ Recomendações:
 - `flipud=0.0`
 - `mosaic/mixup` moderados
 
+## Data augmentation da classificação (keypoints)
+Na Fase 2 (`gerar-features`), o pipeline pode gerar amostras sintéticas a partir dos keypoints inferidos:
+- A linha **real** é sempre gerada.
+- Cópias com ruído gaussiano em `(x,y)` são geradas **somente para split de treino**.
+- O ruído é escalado pelo tamanho do bbox (`noise_std_xy`).
+- Keypoints com confiança abaixo de `conf_min_keypoint` não recebem ruído.
+
+Parâmetros em `config.yaml`:
+- `classificacao.usar_data_augmentation`
+- `classificacao.augmentacao_keypoints.habilitar`
+- `classificacao.augmentacao_keypoints.n_copias`
+- `classificacao.augmentacao_keypoints.noise_std_xy`
+- `classificacao.augmentacao_keypoints.conf_min_keypoint`
+- `classificacao.augmentacao_keypoints.clip_coords`
+- `classificacao.augmentacao_keypoints.deterministico`
+- `classificacao.augmentacao_keypoints.seed`
+
+O CSV de features inclui metadados:
+- `origem_instancia` (`real` ou `augmentation`)
+- `is_aug`, `aug_id`, `split_instancia`
+
 ---
 
 ## Seleção da instância-alvo (Fase 2)
@@ -223,6 +254,8 @@ Se nenhuma instância passar `conf_min`, a imagem é **descartada do treino** e 
 ## Treino do classificador (XGBoost) — early stopping
 O treino tabular cria uma **validação interna** (ex.: 80/20 dentro do treino 90%) e utiliza:
 - `early_stopping_rounds`
+
+Para evitar vazamento entre cópias augmentadas da mesma imagem, a validação interna é feita por **grupo `arquivo`**.
 
 Isso reduz overfitting quando `n_estimators` é alto (ex.: 800).
 
@@ -252,6 +285,10 @@ Inicia o treinamento do YOLO Pose (usando k-fold ou split simples definido no co
 ```bash
 python -m src.cli treinar-pose
 ```
+Estratégias de validação suportadas em `pose.estrategia_validacao`:
+- `kfold_misturado`
+- `groupkfold_por_sessao` (recomendado para reduzir vazamento entre frames/sessões semelhantes)
+- `groupkfold_por_anotador` (proxy por origem/prefixo no nome do arquivo)
 
 #### 3. Inferir Pose (Teste Fase 1)
 Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
