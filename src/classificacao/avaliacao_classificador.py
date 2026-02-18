@@ -12,7 +12,7 @@ import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
 
-def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger):
+def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> None:
     """
     avaliar_classificador: Avalia o modelo no conjunto de teste (10%).
     Oscilação da matriz de confusão e métricas finais.
@@ -208,7 +208,10 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger):
     }
     
     class NumpyEncoder(json.JSONEncoder):
-        def default(self, obj):
+        """Encoder JSON para serializar tipos NumPy em tipos nativos Python."""
+
+        def default(self, obj: Any) -> Any:
+            """Converte objetos NumPy para representacoes serializaveis em JSON."""
             if isinstance(obj, (np.integer, np.int64)):
                 return int(obj)
             if isinstance(obj, (np.floating, np.float64)):

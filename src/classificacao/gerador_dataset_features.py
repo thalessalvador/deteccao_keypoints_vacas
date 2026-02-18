@@ -18,6 +18,15 @@ ORIGEM_AUG = "augmentation"
 
 
 def _ler_cfg_augmentacao_keypoints(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Le e normaliza as configuracoes de augmentation de keypoints da classificacao.
+
+    Args:
+        config (Dict[str, Any]): Configuracao global carregada do YAML.
+
+    Returns:
+        Dict[str, Any]: Configuracoes efetivas de augmentation com gerador aleatorio.
+    """
     cls_cfg = config.get("classificacao", {})
     aug_cfg = cls_cfg.get("augmentacao_keypoints", {})
 
@@ -462,11 +471,13 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
         if bbox_area <= 0: bbox_area = 1.0
     
     # Helper para pegar (x, y) de um nome
-    def get_p(nome: str) -> Tuple[float, float]:
+    def obter_ponto(nome: str) -> Tuple[float, float]:
+        """Retorna coordenadas (x, y) de um keypoint pelo nome."""
         idx = IDX_KP[nome]
         return (float(kpts[idx][0]), float(kpts[idx][1]))
         
-    def get_v(nome: str) -> float:
+    def obter_confianca(nome: str) -> float:
+        """Retorna confianca do keypoint pelo nome."""
         idx = IDX_KP[nome]
         return float(kpts[idx][2])
     
@@ -482,92 +493,94 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     ]
     
     for p1_name, p2_name in pairs:
-        d = calcular_distancia(get_p(p1_name), get_p(p2_name))
+        d = calcular_distancia(obter_ponto(p1_name), obter_ponto(p2_name))
         # dists[f"dist_{p1_name}_{p2_name}"] = d # Não salvar dist bruta como feature final para evitar overfitting de escala
         # Vamos usar apenas para calculos intermediarios se necessario
 
     # --- Razões Obrigatórias (Spec 10.4) ---
-    def calc_ratio(num_p1, num_p2, den_p1, den_p2):
-        num = calcular_distancia(get_p(num_p1), get_p(num_p2))
-        den = calcular_distancia(get_p(den_p1), get_p(den_p2))
+    def calcular_razao(num_p1: str, num_p2: str, den_p1: str, den_p2: str) -> float:
+        """Calcula razao entre duas distancias euclidianas."""
+        num = calcular_distancia(obter_ponto(num_p1), obter_ponto(num_p2))
+        den = calcular_distancia(obter_ponto(den_p1), obter_ponto(den_p2))
         if den == 0: return 0.0
         return num / den
         
-    feat["razao_dist_hip_hook_up_por_dist_hook_up_pin_up"] = calc_ratio("hip", "hook_up", "hook_up", "pin_up")
-    feat["razao_dist_hip_hook_down_por_dist_hook_down_pin_down"] = calc_ratio("hip", "hook_down", "hook_down", "pin_down")
-    feat["razao_dist_hip_tail_head_por_dist_hook_down_pin_down"] = calc_ratio("hip", "tail_head", "hook_down", "pin_down")
-    feat["razao_dist_hip_tail_head_por_dist_hook_up_pin_up"] = calc_ratio("hip", "tail_head", "hook_up", "pin_up")
+    feat["razao_dist_hip_hook_up_por_dist_hook_up_pin_up"] = calcular_razao("hip", "hook_up", "hook_up", "pin_up")
+    feat["razao_dist_hip_hook_down_por_dist_hook_down_pin_down"] = calcular_razao("hip", "hook_down", "hook_down", "pin_down")
+    feat["razao_dist_hip_tail_head_por_dist_hook_down_pin_down"] = calcular_razao("hip", "tail_head", "hook_down", "pin_down")
+    feat["razao_dist_hip_tail_head_por_dist_hook_up_pin_up"] = calcular_razao("hip", "tail_head", "hook_up", "pin_up")
     
-    feat["razao_dist_hip_hook_up_por_dist_hip_tail_head"] = calc_ratio("hip", "hook_up", "hip", "tail_head")
-    feat["razao_dist_hip_hook_down_por_dist_hip_tail_head"] = calc_ratio("hip", "hook_down", "hip", "tail_head")
+    feat["razao_dist_hip_hook_up_por_dist_hip_tail_head"] = calcular_razao("hip", "hook_up", "hip", "tail_head")
+    feat["razao_dist_hip_hook_down_por_dist_hip_tail_head"] = calcular_razao("hip", "hook_down", "hip", "tail_head")
     
-    feat["razao_dist_back_hip_por_dist_hip_tail_head"] = calc_ratio("back", "hip", "hip", "tail_head")
-    feat["razao_dist_back_hip_por_dist_hip_hook_up"] = calc_ratio("back", "hip", "hip", "hook_up")
-    feat["razao_dist_back_hip_por_dist_hip_hook_down"] = calc_ratio("back", "hip", "hip", "hook_down")
-    feat["razao_dist_back_hip_por_dist_hip_pin_up"] = calc_ratio("back", "hip", "hip", "pin_up")
-    feat["razao_dist_back_hip_por_dist_hip_pin_down"] = calc_ratio("back", "hip", "hip", "pin_down")
+    feat["razao_dist_back_hip_por_dist_hip_tail_head"] = calcular_razao("back", "hip", "hip", "tail_head")
+    feat["razao_dist_back_hip_por_dist_hip_hook_up"] = calcular_razao("back", "hip", "hip", "hook_up")
+    feat["razao_dist_back_hip_por_dist_hip_hook_down"] = calcular_razao("back", "hip", "hip", "hook_down")
+    feat["razao_dist_back_hip_por_dist_hip_pin_up"] = calcular_razao("back", "hip", "hip", "pin_up")
+    feat["razao_dist_back_hip_por_dist_hip_pin_down"] = calcular_razao("back", "hip", "hip", "pin_down")
 
     # --- Features adicionais (inspiradas no artigo) ---
     # Distancias brutas entre pontos-chave
-    feat["dist_hip_tail_head"] = calcular_distancia(get_p("hip"), get_p("tail_head"))
-    feat["dist_tail_head_pin_up"] = calcular_distancia(get_p("tail_head"), get_p("pin_up"))
-    feat["dist_back_hook_up"] = calcular_distancia(get_p("back"), get_p("hook_up"))
+    feat["dist_hip_tail_head"] = calcular_distancia(obter_ponto("hip"), obter_ponto("tail_head"))
+    feat["dist_tail_head_pin_up"] = calcular_distancia(obter_ponto("tail_head"), obter_ponto("pin_up"))
+    feat["dist_back_hook_up"] = calcular_distancia(obter_ponto("back"), obter_ponto("hook_up"))
 
     # Razao entre largura na linha dos hooks e largura na linha dos pins
-    largura_hooks = calcular_distancia(get_p("hook_up"), get_p("hook_down"))
-    largura_pins = calcular_distancia(get_p("pin_up"), get_p("pin_down"))
+    largura_hooks = calcular_distancia(obter_ponto("hook_up"), obter_ponto("hook_down"))
+    largura_pins = calcular_distancia(obter_ponto("pin_up"), obter_ponto("pin_down"))
     feat["razao_largura_hooks_por_largura_pins"] = (largura_hooks / largura_pins) if largura_pins > 0 else 0.0
     
     # --- Ângulos Obrigatórios (Spec 10.4) ---
-    def calc_ang(p1, v, p3):
-        return calcular_angulo(get_p(p1), get_p(v), get_p(p3))
+    def calcular_angulo_tripla(p1: str, v: str, p3: str) -> float:
+        """Calcula angulo em graus com vertice no ponto central informado."""
+        return calcular_angulo(obter_ponto(p1), obter_ponto(v), obter_ponto(p3))
         
-    feat["angulo_hook_up_hip_hook_down"] = calc_ang("hook_up", "hip", "hook_down")
-    feat["angulo_hip_hook_up_pin_up"] = calc_ang("hip", "hook_up", "pin_up")
-    feat["angulo_hip_hook_down_pin_down"] = calc_ang("hip", "hook_down", "pin_down")
-    feat["angulo_hook_up_hip_tail_head"] = calc_ang("hook_up", "hip", "tail_head")
-    feat["angulo_hook_down_hip_tail_head"] = calc_ang("hook_down", "hip", "tail_head")
-    feat["angulo_pin_up_tail_head_pin_down"] = calc_ang("pin_up", "tail_head", "pin_down")
-    feat["angulo_pin_up_hip_pin_down"] = calc_ang("pin_up", "hip", "pin_down")
-    feat["angulo_hook_up_back_hook_down"] = calc_ang("hook_up", "back", "hook_down")
-    feat["angulo_hook_up_pin_up_tail_head"] = calc_ang("hook_up", "pin_up", "tail_head")
+    feat["angulo_hook_up_hip_hook_down"] = calcular_angulo_tripla("hook_up", "hip", "hook_down")
+    feat["angulo_hip_hook_up_pin_up"] = calcular_angulo_tripla("hip", "hook_up", "pin_up")
+    feat["angulo_hip_hook_down_pin_down"] = calcular_angulo_tripla("hip", "hook_down", "pin_down")
+    feat["angulo_hook_up_hip_tail_head"] = calcular_angulo_tripla("hook_up", "hip", "tail_head")
+    feat["angulo_hook_down_hip_tail_head"] = calcular_angulo_tripla("hook_down", "hip", "tail_head")
+    feat["angulo_pin_up_tail_head_pin_down"] = calcular_angulo_tripla("pin_up", "tail_head", "pin_down")
+    feat["angulo_pin_up_hip_pin_down"] = calcular_angulo_tripla("pin_up", "hip", "pin_down")
+    feat["angulo_hook_up_back_hook_down"] = calcular_angulo_tripla("hook_up", "back", "hook_down")
+    feat["angulo_hook_up_pin_up_tail_head"] = calcular_angulo_tripla("hook_up", "pin_up", "tail_head")
     
     # Recomendadas
-    feat["angulo_withers_back_tail_head"] = calc_ang("withers", "back", "tail_head")
+    feat["angulo_withers_back_tail_head"] = calcular_angulo_tripla("withers", "back", "tail_head")
     
     # --- FEATURES COMPLEXAS (NOVAS) ---
     
     # 1. Áreas de Polígonos (Normalizadas pela área do bbox)
     # Área Pélvica (Trapézio Traseiro): hook_up, hook_down, pin_down, pin_up
-    poly_pelvic = [get_p("hook_up"), get_p("hook_down"), get_p("pin_down"), get_p("pin_up")]
+    poly_pelvic = [obter_ponto("hook_up"), obter_ponto("hook_down"), obter_ponto("pin_down"), obter_ponto("pin_up")]
     area_pelvic = calcular_area_poligono(poly_pelvic)
     feat["area_poligono_pelvico_norm"] = area_pelvic / bbox_area
     
     # Área Torácica (Triângulo Frontal): withers, back, hip
-    poly_torax = [get_p("withers"), get_p("back"), get_p("hip")]
+    poly_torax = [obter_ponto("withers"), obter_ponto("back"), obter_ponto("hip")]
     area_torax = calcular_area_poligono(poly_torax)
     feat["area_triangulo_torax_norm"] = area_torax / bbox_area
 
     # 2. Índices de Conformação
     # Índice de Robustez: Largura Hooks / Comprimento Corpo (Withers -> Tail)
-    width_hooks = calcular_distancia(get_p("hook_up"), get_p("hook_down"))
-    len_body = calcular_distancia(get_p("withers"), get_p("tail_head"))
+    width_hooks = calcular_distancia(obter_ponto("hook_up"), obter_ponto("hook_down"))
+    len_body = calcular_distancia(obter_ponto("withers"), obter_ponto("tail_head"))
     feat["indice_robustez"] = width_hooks / len_body if len_body > 0 else 0.0
     
     # Índice de Triângulo Traseiro (Hip -> Pins) / BBox Area
     # (Triangulo formado por Hip e os dois Pins - simplificação geometrica)
-    poly_tri_rear = [get_p("hip"), get_p("pin_up"), get_p("pin_down")]
+    poly_tri_rear = [obter_ponto("hip"), obter_ponto("pin_up"), obter_ponto("pin_down")]
     area_tri_rear = calcular_area_poligono(poly_tri_rear)
     feat["indice_triangulo_traseiro"] = area_tri_rear / bbox_area
 
     # 3. Curvatura da Coluna
     # Soma de angulos absolutos ao longo da coluna não é trivial pois angulo é sempre positivo.
     # Vamos usar Distancia Perpendicular (Desvio) de Back e Hip em relação à linha Withers->TailHead.
-    p_withers = get_p("withers")
-    p_tail = get_p("tail_head")
+    p_withers = obter_ponto("withers")
+    p_tail = obter_ponto("tail_head")
     
-    dev_back = calcular_distancia_ponto_reta(get_p("back"), p_withers, p_tail)
-    dev_hip = calcular_distancia_ponto_reta(get_p("hip"), p_withers, p_tail)
+    dev_back = calcular_distancia_ponto_reta(obter_ponto("back"), p_withers, p_tail)
+    dev_hip = calcular_distancia_ponto_reta(obter_ponto("hip"), p_withers, p_tail)
     
     # Normalizar pelo len_body para ser invariante a escala
     feat["desvio_coluna_back_norm"] = dev_back / len_body if len_body > 0 else 0.0

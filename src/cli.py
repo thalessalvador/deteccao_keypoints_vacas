@@ -13,7 +13,7 @@ from .classificacao.gerador_dataset_features import gerar_dataset_features
 from .classificacao.treino_classificador import treinar_classificador
 from .classificacao.avaliacao_classificador import avaliar_classificador
 
-def main():
+def main() -> None:
     """
     main: Ponto de entrada da CLI para o Projeto Vacas.
     
@@ -107,14 +107,14 @@ def run_treinar_classificador(config: dict, logger: logging.Logger) -> Path:
     """
     return treinar_classificador(config, logger)
 
-def run_avaliar_classificador(config: dict, logger: logging.Logger):
+def run_avaliar_classificador(config: dict, logger: logging.Logger) -> None:
     """
     run_avaliar_classificador: Executa a avaliação do classificador (Fase 3).
     """
     avaliar_classificador(config, logger)
 
 
-def run_preprocessar_pose(config: dict, logger: logging.Logger):
+def run_preprocessar_pose(config: dict, logger: logging.Logger) -> None:
     """
     run_preprocessar_pose: Executa a etapa de pré-processamento (Fase 1).
     
@@ -158,7 +158,7 @@ def run_treinar_pose(config: dict, logger: logging.Logger) -> Path:
     logger.info(f"Treino finalizado. Melhor modelo: {best_model}")
     return best_model
 
-def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: logging.Logger):
+def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: logging.Logger) -> None:
     """
     run_inferir_pose: Executa inferência de pose em uma imagem única.
 
@@ -234,7 +234,7 @@ def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
     out_csv = gerar_dataset_features(config, logger)
     return out_csv
 
-def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bool, logger: logging.Logger):
+def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bool, logger: logging.Logger) -> None:
     """
     run_classificar_imagem: Executa classificação de uma imagem única.
     """

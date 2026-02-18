@@ -133,7 +133,36 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
         logger.warning(f"Modelo {model_type} desconhecido. Usando XGBoost.")
         return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
 
-def _treinar_xgboost(X, y, groups, origem_instancia, config_cls, models_dir, reports_dir, feature_cols, aug_stats, logger):
+def _treinar_xgboost(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    feature_cols: List[str],
+    aug_stats: Dict[str, Any],
+    logger: logging.Logger
+) -> Path:
+    """
+    Treina modelo XGBoost com split interno por grupos (arquivo) e early stopping.
+
+    Args:
+        X (pd.DataFrame): Matriz de features.
+        y (np.ndarray): Vetor de labels codificados.
+        groups (np.ndarray): Identificador de grupo por amostra (arquivo).
+        origem_instancia (np.ndarray): Origem da amostra ("real" ou "augmentation").
+        config_cls (Dict[str, Any]): Configuracoes da secao classificacao.
+        models_dir (Path): Diretorio de saida dos modelos.
+        reports_dir (Path): Diretorio de saida dos relatorios.
+        feature_cols (List[str]): Nomes das features usadas.
+        aug_stats (Dict[str, Any]): Resumo de estatisticas de augmentation.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Path: Caminho do modelo salvo.
+    """
     # Split interno para validacao/early stopping (Spec 11.1)
     # Importante: split por grupo (arquivo) evita leakage entre copias augmentadas da mesma imagem.
     val_frac = config_cls.get("validacao_interna", {}).get("fracao", 0.2)
@@ -255,6 +284,15 @@ def _treinar_xgboost(X, y, groups, origem_instancia, config_cls, models_dir, rep
 
 
 def _resumir_augmentation_em_df(df_train: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Resume quantidade de instancias reais e augmentadas no dataframe de treino.
+
+    Args:
+        df_train (pd.DataFrame): DataFrame de treino.
+
+    Returns:
+        Dict[str, Any]: Estatisticas de contagem por origem de instancia.
+    """
     if "origem_instancia" not in df_train.columns:
         total = int(len(df_train))
         return {
@@ -314,6 +352,7 @@ def _extrair_importancia_xgboost(clf: xgb.XGBClassifier, feature_cols: List[str]
         return normalizado
 
     def ordenar_importancia(raw_scores: Dict[str, float], tipo: str) -> List[Dict[str, Any]]:
+        """Monta lista ordenada de importancia no formato padronizado do relatorio."""
         scores = normalizar_scores(raw_scores)
         linhas = []
         for f_id, nome in fmap.items():
@@ -408,7 +447,28 @@ def _salvar_graficos_xgboost(clf: xgb.XGBClassifier, feature_importance: Dict[st
     logger.info(f"Graficos de treino XGBoost salvos em: {reports_dir}")
 
 
-def _treinar_rf(X, y, config_cls, models_dir, reports_dir, logger):
+def _treinar_rf(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger
+) -> Path:
+    """
+    Treina baseline RandomForest com validacao interna simples estratificada.
+
+    Args:
+        X (pd.DataFrame): Matriz de features.
+        y (np.ndarray): Vetor de labels codificados.
+        config_cls (Dict[str, Any]): Configuracoes da secao classificacao.
+        models_dir (Path): Diretorio de saida dos modelos.
+        reports_dir (Path): Diretorio de saida dos relatorios.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Path: Caminho do modelo salvo.
+    """
     logger.info("Treinando RandomForest (Baseline)...")
     clf = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
     

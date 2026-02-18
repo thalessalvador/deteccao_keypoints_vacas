@@ -140,6 +140,7 @@ Principais parâmetros:
 - `classificacao.modelo_padrao`
 - `classificacao.features.selecionadas`
 - `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
+- `classificacao.validacao_interna.usar_apenas_real` (validação interna só com instâncias reais)
 
 ---
 
@@ -256,6 +257,8 @@ O treino tabular cria uma **validação interna** (ex.: 80/20 dentro do treino 9
 - `early_stopping_rounds`
 
 Para evitar vazamento entre cópias augmentadas da mesma imagem, a validação interna é feita por **grupo `arquivo`**.
+Opcionalmente, é possível filtrar a validação interna para usar apenas instâncias reais com
+`classificacao.validacao_interna.usar_apenas_real=true`.
 
 Isso reduz overfitting quando `n_estimators` é alto (ex.: 800).
 
@@ -295,7 +298,7 @@ Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
 ```bash
 python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar
 ```
-*A saída será salva em `saidas/outputs/inferencias/imagens_plotadas`.*
+*A saída será salva em `saidas/inferencias/imagens_plotadas`.*
 
 #### 4. Gerar Features (Fase 2)
 Processa todas as imagens de `dataset_classificacao`, extrai keypoints e calcula as features geométricas (CSV):
@@ -309,13 +312,13 @@ Treina o modelo XGBoost usando o CSV gerado e salva os artefatos (`xgboost_model
 python -m src.cli treinar-classificador
 ```
 
-#### 7. Avaliar Classificador (Fase 3)
+#### 6. Avaliar Classificador (Fase 3)
 Avalia o modelo treinado no conjunto de teste (10% isolado por vaca) e gera matriz de confusão:
 ```bash
 python -m src.cli avaliar-classificador
 ```
 
-#### 8. Classificar Imagem (End-to-End)
+#### 7. Classificar Imagem (End-to-End)
 Executa o fluxo completo para uma nova imagem:
 1. Detecta pose (YOLO).
 2. Extrai features.
@@ -327,7 +330,7 @@ python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --des
 
 > **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os **nomes dos arquivos** (`arquivo.jpg`) reservados para teste.
 
-#### 9. Pipeline Completo
+#### 8. Pipeline Completo
 Executa todas as etapas em sequência (útil para reprodução total):
 ```bash
 python -m src.cli pipeline-completo
