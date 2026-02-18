@@ -230,7 +230,6 @@ def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
     Returns:
         Path: Caminho do arquivo CSV de features gerado.
     """
-    logger.info("=== Fase 2: Geração de Features ===")
     out_csv = gerar_dataset_features(config, logger)
     return out_csv
 

@@ -3,6 +3,7 @@ import torch
 from pathlib import Path
 import shutil
 from typing import Dict, Any, List
+from collections import deque
 from sklearn.model_selection import KFold, GroupKFold
 import re
 import yaml
@@ -119,7 +120,8 @@ def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
             if not last_row:
                 return {}
             
-            def get_val(name):
+            def get_val(name: str) -> float:
+                """Retorna valor float da metrica solicitada na ultima linha do CSV."""
                 # Tenta encontrar correspondencia exata apÃ³s strip
                 name_clean = name.strip()
                 if name_clean in header:
@@ -145,10 +147,10 @@ def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
             }
             
     except Exception as e:
-        print(f"Erro ao ler CSV {csv_path}: {e}")
+        logging.getLogger("projeto_vacas").warning(f"Erro ao ler CSV {csv_path}: {e}")
         return {}
 
-def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.Logger):
+def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.Logger) -> None:
     """
     _imprimir_tabela_resumo: Imprime uma tabela formatada com os resultados dos folds.
 
@@ -215,8 +217,12 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
     pose_cfg = config.get("pose", {})
     k_folds = pose_cfg.get("k_folds", 1)
     estrategia_validacao = pose_cfg.get("estrategia_validacao", "kfold_misturado")
+    forcar_diversidade_batch = bool(pose_cfg.get("forcar_diversidade_batch", False))
     imgsz = pose_cfg.get("imgsz", 640)
     batch = pose_cfg.get("batch", 16)
+    workers = int(pose_cfg.get("workers", 8))
+    cache = pose_cfg.get("cache", False)
+    amp = bool(pose_cfg.get("amp", True))
     epochs = pose_cfg.get("epochs", 100)
     patience = pose_cfg.get("patience", 50)
     
@@ -256,9 +262,32 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         # Modo simples: Treinar com split aleatÃ³rio (YOLO faz se dermos fraction? NÃ£o, YOLO precisa de dataset.yaml com paths)
         # Vamos criar um split 80/20 manual
         train_files, val_files = _split_manual(image_files, 0.2)
-        yaml_path = _criar_yaml_split(dir_yolo, train_files, val_files, "split_single", logger)
+        yaml_path = _criar_yaml_split(
+            dir_yolo,
+            train_files,
+            val_files,
+            "split_single",
+            logger,
+            forcar_diversidade_batch=forcar_diversidade_batch,
+            estrategia_grupo_diversidade=estrategia_validacao,
+        )
         
-        return _executar_yolo(model_name, yaml_path, epochs, imgsz, batch, device, runs_dir / "single", logger, patience, usar_aug, aug_cfg)
+        return _executar_yolo(
+            model_name,
+            yaml_path,
+            epochs,
+            imgsz,
+            batch,
+            device,
+            runs_dir / "single",
+            logger,
+            patience,
+            usar_aug,
+            aug_cfg,
+            workers,
+            cache,
+            amp,
+        )
 
     else:
         # K-Fold Cross Validation
@@ -299,12 +328,35 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
             logger.info(f"Fold {fold_idx}: {len(fold_train_files)} treino, {len(fold_val_files)} validacao")
             
             # Criar YAML temporÃ¡rio para este fold
-            yaml_fold = _criar_yaml_split(dir_yolo, fold_train_files, fold_val_files, f"split_fold_{fold_idx}", logger)
+            yaml_fold = _criar_yaml_split(
+                dir_yolo,
+                fold_train_files,
+                fold_val_files,
+                f"split_fold_{fold_idx}",
+                logger,
+                forcar_diversidade_batch=forcar_diversidade_batch,
+                estrategia_grupo_diversidade=estrategia_validacao,
+            )
             
             project_dir = runs_dir / f"fold_{fold_idx}"
             
             # Treinar
-            final_model = _executar_yolo(model_name, yaml_fold, epochs, imgsz, batch, device, project_dir, logger, patience, usar_aug, aug_cfg)
+            final_model = _executar_yolo(
+                model_name,
+                yaml_fold,
+                epochs,
+                imgsz,
+                batch,
+                device,
+                project_dir,
+                logger,
+                patience,
+                usar_aug,
+                aug_cfg,
+                workers,
+                cache,
+                amp,
+            )
             
             # Coletar mÃ©tricas do results.csv
             metrics = _ler_metricas_csv(project_dir / "results.csv", fold_idx)
@@ -328,7 +380,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
                  if best_model_path is None:
                      best_model_path = final_model
             
-        logger.info("K-Fold concluÃ­do.")
+        logger.info("K-Fold concluído.")
         _imprimir_tabela_resumo(fold_metrics, logger)
         
         # Salvar relatÃ³rio JSON
@@ -347,7 +399,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         with open(relatorio_path, 'w', encoding='utf-8') as f:
             json.dump(relatorio, f, indent=2)
             
-        logger.info(f"RelatÃ³rio de mÃ©tricas salvo em: {relatorio_path}")
+        logger.info(f"Relatório de métricas salvo em: {relatorio_path}")
         
         if best_model_path:
             logger.info(f"Selecionado o modelo do Fold com melhor mAP ({best_map_pose:.4f}): {best_model_path}")
@@ -372,7 +424,52 @@ def _split_manual(files: List[Path], val_frac: float) -> Any:
     n_val = int(len(files) * val_frac)
     return files[n_val:], files[:n_val]
 
-def _criar_yaml_split(root_dir: Path, train_files: List[Path], val_files: List[Path], name: str, logger: logging.Logger) -> Path:
+def _intercalar_treino_por_grupo(
+    arquivos_treino: List[Path],
+    estrategia_grupo: str,
+) -> List[Path]:
+    """
+    _intercalar_treino_por_grupo: Reordena treino para alternar grupos e aumentar diversidade local.
+
+    A reordenacao usa round-robin entre grupos extraidos do nome do arquivo.
+    Nao altera o conjunto de amostras; apenas a ordem de escrita no TXT de treino.
+
+    Args:
+        arquivos_treino (List[Path]): Arquivos do split de treino.
+        estrategia_grupo (str): Estrategia usada para extracao do grupo.
+
+    Returns:
+        List[Path]: Lista reordenada, priorizando alternancia entre grupos.
+    """
+    grupos_para_arquivos: Dict[str, List[Path]] = {}
+    for caminho in arquivos_treino:
+        grupo = _extrair_grupo_validacao(caminho, estrategia_grupo)
+        grupos_para_arquivos.setdefault(grupo, []).append(caminho)
+
+    for grupo, arquivos in grupos_para_arquivos.items():
+        grupos_para_arquivos[grupo] = sorted(arquivos)
+
+    fila_grupos = deque(sorted(grupos_para_arquivos.keys()))
+    arquivos_ordenados: List[Path] = []
+
+    while fila_grupos:
+        grupo_atual = fila_grupos.popleft()
+        arquivos_grupo = grupos_para_arquivos[grupo_atual]
+        arquivos_ordenados.append(arquivos_grupo.pop(0))
+        if arquivos_grupo:
+            fila_grupos.append(grupo_atual)
+
+    return arquivos_ordenados
+
+def _criar_yaml_split(
+    root_dir: Path,
+    train_files: List[Path],
+    val_files: List[Path],
+    name: str,
+    logger: logging.Logger,
+    forcar_diversidade_batch: bool = False,
+    estrategia_grupo_diversidade: str = "groupkfold_por_sessao",
+) -> Path:
     """
     _criar_yaml_split: Gera um arquivo YAML de configuraÃ§Ã£o de dataset para o YOLO.
 
@@ -396,8 +493,23 @@ def _criar_yaml_split(root_dir: Path, train_files: List[Path], val_files: List[P
     train_txt = txt_dir / f"{name}_train.txt"
     val_txt = txt_dir / f"{name}_val.txt"
     
+    arquivos_treino_saida = train_files
+    if forcar_diversidade_batch:
+        arquivos_treino_saida = _intercalar_treino_por_grupo(
+            arquivos_treino=train_files,
+            estrategia_grupo=estrategia_grupo_diversidade,
+        )
+        grupos_unicos = len({
+            _extrair_grupo_validacao(p, estrategia_grupo_diversidade)
+            for p in arquivos_treino_saida
+        })
+        logger.info(
+            f"Diversidade de batch habilitada no split '{name}': "
+            f"treino reordenado por grupos ({grupos_unicos} grupos)."
+        )
+
     with open(train_txt, 'w', encoding='utf-8') as f:
-        for p in train_files:
+        for p in arquivos_treino_saida:
             f.write(str(p.resolve()) + '\n')
             
     with open(val_txt, 'w', encoding='utf-8') as f:
@@ -432,6 +544,9 @@ def _executar_yolo(
     patience: int = 50,
     usar_aug: bool = True,
     aug_cfg: Dict[str, Any] = None,
+    workers: int = 8,
+    cache: Any = False,
+    amp: bool = True,
 ) -> Path:
     """
     _executar_yolo: Instancia e inÃ­cia o processo de treinamento do YOLO.
@@ -492,6 +607,9 @@ def _executar_yolo(
             epochs=epochs,
             imgsz=imgsz,
             batch=batch,
+            workers=workers,
+            cache=cache,
+            amp=amp,
             device=device,
             project=str(project_dir.parent),
             name=project_dir.name,

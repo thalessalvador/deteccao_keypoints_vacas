@@ -40,8 +40,8 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
             with open(relatorio_path, 'r') as f:
                 data = json.load(f)
                 model_path = data.get("melhor_modelo", {}).get("path")
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Nao foi possivel ler metricas_pose.json: {e}")
         
     if not model_path or not Path(model_path).exists():
         candidates = list(runs_dir.rglob("best.pt"))
@@ -55,18 +55,32 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
     
     # 2. Carregar Classificador e Artefatos
     cls_model_dir = Path("modelos/classificacao/modelos_salvos")
-    xgb_path = cls_model_dir / "xgboost_model.json"
+    model_type = config.get("classificacao", {}).get("modelo_padrao", "xgboost")
+    if model_type == "catboost":
+        model_path_cls = cls_model_dir / "catboost_model.cbm"
+    elif model_type == "sklearn_rf":
+        model_path_cls = cls_model_dir / "rf_model.joblib"
+    else:
+        model_path_cls = cls_model_dir / "xgboost_model.json"
     le_path = cls_model_dir / "label_encoder.pkl"
     feats_path = cls_model_dir / "feature_names.pkl"
     
-    if not xgb_path.exists() or not le_path.exists() or not feats_path.exists():
+    if not model_path_cls.exists() or not le_path.exists() or not feats_path.exists():
         msg = "Modelos de classificação não encontrados. Execute 'treinar-classificador' primeiro."
         logger.error(msg)
         return {"erro": msg}
         
-    # Carregar modelo XGB
-    clf = xgb.XGBClassifier()
-    clf.load_model(str(xgb_path))
+    # Carregar modelo de classificacao
+    if model_type == "catboost":
+        from catboost import CatBoostClassifier
+        clf = CatBoostClassifier()
+        clf.load_model(str(model_path_cls))
+    elif model_type == "sklearn_rf":
+        import joblib
+        clf = joblib.load(model_path_cls)
+    else:
+        clf = xgb.XGBClassifier()
+        clf.load_model(str(model_path_cls))
     
     # Carregar LabelEncoder e Feature Names
     import joblib

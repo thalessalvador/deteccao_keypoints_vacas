@@ -1,8 +1,10 @@
 pose:
-  mode: "train" # train, val, predict
   model_name: "yolo26n-pose.pt" # Pretrained model to start from
   imgsz: 640
-  batch: 16
+  batch: 20
+  workers: 12 # DataLoader (CPU/I/O). Teste 8, 12 e 16.
+  cache: ram # false | ram | disk. "ram" acelera leitura se houver memoria.
+  amp: true # mixed precision na GPU (mais rapido e menor uso de VRAM)
   epochs: 200
   patience: 50 # Early stopping epochs
   device: "0" # "cpu" or "0", "1", etc.
@@ -45,12 +47,12 @@ pose:
     erasing: 0.2
 
 classificacao:
-  modelo_padrao: "xgboost"
-  baseline_opcional: "sklearn_rf"
+  # Modelos suportados: "xgboost", "catboost", "sklearn_rf"
+  modelo_padrao: "sklearn_rf"
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
     habilitar: true # Ativa augmentation em keypoints (alem da flag global acima)
-    n_copias: 9 # Quantas copias sinteticas gerar por instancia real de treino
+    n_copias: 10 # Quantas copias sinteticas gerar por instancia real de treino
     noise_std_xy: 0.004 # Intensidade do ruido gaussiano em XY (escala relativa ao bbox)
     conf_min_keypoint: 0.01 # So aplica ruido em keypoints com confianca >= este valor
     clip_coords: true # Limita coordenadas para dentro da imagem apos ruido
@@ -62,13 +64,58 @@ classificacao:
     peso_area: 0.5
     peso_confianca: 0.5
     bonus_centro: 0.2
-    priorizar_centro: true
   validacao_interna:
-    habilitar: true
     fracao: 0.2
-    estratificar: true
     early_stopping_rounds: 50
     usar_apenas_real: true # Se true, validacao interna usa apenas origem_instancia=real
+  # Hiperparametros base do XGBoost (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
+  xgboost:
+    n_estimators: 1000
+    learning_rate: 0.05
+    max_depth: 6
+    min_child_weight: 1.0
+    subsample: 0.8
+    colsample_bytree: 0.8
+    gamma: 0.0
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    random_state: 42
+    tree_method: "hist"
+    device: "cuda" # "cuda" ou "cpu"
+    n_jobs: -1
+  # Hiperparametros base do CatBoost (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
+  catboost:
+    iterations: 1000
+    learning_rate: 0.05
+    depth: 6
+    l2_leaf_reg: 3.0
+    random_strength: 1.0
+    bagging_temperature: 0.5
+    rsm: 0.8
+    eval_metric: "MultiClass"
+    random_seed: 42
+    device: "cuda" # "cuda" ou "cpu"
+  # Hiperparametros base do RandomForest (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
+  rf:
+    n_estimators: 400
+    max_depth: null
+    min_samples_split: 2
+    min_samples_leaf: 1
+    max_features: "sqrt" # "sqrt", "log2" ou null
+    bootstrap: true
+    class_weight: null # null ou "balanced"
+    random_state: 42
+    n_jobs: -1
+  # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest (menos forca bruta que GridSearch).
+  # metodo:
+  # - "optuna": TPE/Bayesiano (preferencial, requer optuna instalado)
+  # - "random": busca aleatoria simples (fallback)
+  otimizacao_hiperparametros:
+    habilitar: true
+    metodo: "optuna"
+    n_trials: 40
+    timeout_segundos: null
+    seed: 42
   features:
     # Ordem de importancia (gain) do ultimo treino com todas as features.
     # Top 10 ativos; restante comentado para liberar um a um.

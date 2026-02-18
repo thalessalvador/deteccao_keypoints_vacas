@@ -1,4 +1,4 @@
-﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost)
+﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF)
 
 ## Visão geral
 Este repositório implementa um pipeline em 3 fases:
@@ -10,8 +10,8 @@ Este repositório implementa um pipeline em 3 fases:
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
-3. **Fase 3 — Classificação da vaca (XGBoost)**  
-   Treina um classificador tabular (**XGBoost por padrão; RandomForest baseline opcional**) e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
+3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF)**  
+   Treina um classificador tabular (**XGBoost por padrão; CatBoost e RandomForest como alternativas**) e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
 
@@ -24,7 +24,7 @@ Este repositório implementa um pipeline em 3 fases:
   - scikit-learn
   - matplotlib
   - pyyaml
-  - xgboost (padrão)
+  - xgboost / catboost (classificação tabular)
 - GPU NVIDIA (opcional, recomendado): qualquer RTX com CUDA compatível.
 
 ---
@@ -137,7 +137,7 @@ Principais parâmetros:
 - `pose.imgsz`, `pose.batch`, `pose.epochs`, `pose.device`
 - `pose.k_folds`, `pose.estrategia_validacao`
 - `pose.usar_data_augmentation` e `pose.augmentacao`
-- `classificacao.modelo_padrao`
+- `classificacao.modelo_padrao` (`xgboost`, `catboost` ou `sklearn_rf`)
 - `classificacao.features.selecionadas`
 - `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
 - `classificacao.validacao_interna.usar_apenas_real` (validação interna só com instâncias reais)
@@ -252,7 +252,7 @@ Se nenhuma instância passar `conf_min`, a imagem é **descartada do treino** e 
 
 ---
 
-## Treino do classificador (XGBoost) — early stopping
+## Treino do classificador (XGBoost/CatBoost/RF) — early stopping
 O treino tabular cria uma **validação interna** (ex.: 80/20 dentro do treino 90%) e utiliza:
 - `early_stopping_rounds`
 
@@ -307,7 +307,7 @@ python -m src.cli gerar-features
 ```
 
 #### 5. Treinar Classificador (Fase 3)
-Treina o modelo XGBoost usando o CSV gerado e salva os artefatos (`xgboost_model.json`, encoder, etc):
+Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json` ou `catboost_model.cbm` ou `rf_model.joblib`, além do encoder):
 ```bash
 python -m src.cli treinar-classificador
 ```
@@ -364,7 +364,3 @@ python -m src.cli pipeline-completo
 
 ## Licença
 Definir conforme necessidade do projeto.
-
-
-
-

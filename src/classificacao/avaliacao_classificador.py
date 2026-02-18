@@ -27,13 +27,19 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
     models_dir = Path(config["paths"]["models"]) / "classificacao" / "modelos_salvos"
     reports_dir = Path(config["paths"]["outputs"]) / "relatorios"
     garantir_diretorio(reports_dir)
+    model_type = config.get("classificacao", {}).get("modelo_padrao", "xgboost")
     
     # Validar arquivos
     if not features_csv.exists() or not test_txt.exists():
         logger.error("Arquivos de dados não encontrados. Rode as etapas anteriores.")
         return
 
-    model_path = models_dir / "xgboost_model.json"
+    if model_type == "catboost":
+        model_path = models_dir / "catboost_model.cbm"
+    elif model_type == "sklearn_rf":
+        model_path = models_dir / "rf_model.joblib"
+    else:
+        model_path = models_dir / "xgboost_model.json"
     le_path = models_dir / "label_encoder.pkl"
     fn_path = models_dir / "feature_names.pkl" # Se existir
     
@@ -87,14 +93,23 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
     y_test = le.transform(y_test_str)
     
     # Carregar Modelo
-    clf = xgb.XGBClassifier()
-    clf.load_model(model_path)
+    if model_type == "catboost":
+        from catboost import CatBoostClassifier
+        clf = CatBoostClassifier()
+        clf.load_model(str(model_path))
+    elif model_type == "sklearn_rf":
+        clf = joblib.load(model_path)
+    else:
+        clf = xgb.XGBClassifier()
+        clf.load_model(model_path)
     
     # Inferência
-    preds = clf.predict(X_test)
-    probs = clf.predict_proba(X_test)
-    conf_max = probs.max(axis=1)
-    acertos = preds == y_test
+    preds = np.asarray(clf.predict(X_test)).reshape(-1)
+    probs = np.asarray(clf.predict_proba(X_test))
+    if probs.ndim == 1:
+        probs = np.vstack([1.0 - probs, probs]).T
+    conf_max = probs.max(axis=1).reshape(-1)
+    acertos = (preds == y_test).reshape(-1)
     
     # Métricas
     acc = accuracy_score(y_test, preds)

@@ -38,3 +38,8 @@ wandb/
 
 # Jupyter
 .ipynb_checkpoints/
+# Artefatos CatBoost
+catboost_info/
+
+# Build local
+build/
