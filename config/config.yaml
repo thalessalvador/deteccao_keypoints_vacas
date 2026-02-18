@@ -1,9 +1,9 @@
 pose:
   model_name: "yolo26n-pose.pt" # Pretrained model to start from
   imgsz: 640
-  batch: 20
-  workers: 12 # DataLoader (CPU/I/O). Teste 8, 12 e 16.
-  cache: ram # false | ram | disk. "ram" acelera leitura se houver memoria.
+  batch: 16
+  workers: 8 # DataLoader (CPU/I/O). Teste 8, 12 e 16.
+  cache: false # false | ram | disk. "ram" acelera leitura se houver memoria.
   amp: true # mixed precision na GPU (mais rapido e menor uso de VRAM)
   epochs: 200
   patience: 50 # Early stopping epochs
