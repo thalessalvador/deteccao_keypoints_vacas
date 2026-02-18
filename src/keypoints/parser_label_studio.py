@@ -239,7 +239,9 @@ def _processar_item_label_studio(
                     keypoints.append(kp)
 
     if not bboxes:
-         return None
+        ref_img = caminho_imagem_final.name if caminho_imagem_final else (nome_imagem_referencia or arquivo_json.name)
+        logger.warning(f"Imagem sem bbox anotada. Pulando item: {ref_img}")
+        return None
 
     if img_width == 0 or img_height == 0:
         return None
