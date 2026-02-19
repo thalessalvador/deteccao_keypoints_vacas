@@ -64,6 +64,21 @@ classificacao:
     peso_area: 0.5
     peso_confianca: 0.5
     bonus_centro: 0.2
+  filtro_confianca_pose:
+    # Filtro de qualidade da pose antes de gerar/classificar features.
+    # A confianca usada aqui e a MEDIA DAS CONFIANCAS DOS 8 KEYPOINTS da instancia selecionada.
+    # Passos:
+    # 1) Filtra keypoints com conf >= conf_min_keypoint_visivel
+    # 2) Calcula a media desses keypoints filtrados
+    # 3) Compara com conf_media_min; se media < conf_media_min, descarta a instancia
+    #
+    # Exemplo (8 confs): [0.90, 0.80, 0.70, 0.60, 0.40, 0.20, 0.05, 0.01]
+    # - conf_min_keypoint_visivel=0.10 -> entram [0.90, 0.80, 0.70, 0.60, 0.40, 0.20]
+    # - media = (0.90+0.80+0.70+0.60+0.40+0.20)/6 = 0.60
+    # - se conf_media_min=0.50, aceita; se conf_media_min=0.65, descarta
+    habilitar: true # Liga/desliga o filtro de confianca media dos 8 keypoints
+    conf_media_min: 0.50 # Limiar minimo da MEDIA (apos filtro) para aceitar a instancia
+    conf_min_keypoint_visivel: 0.01 # Limiar minimo por keypoint para ele entrar no calculo da media
   validacao_interna:
     fracao: 0.2
     early_stopping_rounds: 50
@@ -118,58 +133,58 @@ classificacao:
     seed: 42
   features:
     # Ordem de importancia (gain) do ultimo treino com todas as features.
-    # Top 10 ativos; restante comentado para liberar um a um.
+    # Descomentados ativos; restante comentado para liberar um a um.
     selecionadas:
-      - "dist_hip_tail_head"
-      - "dist_tail_head_pin_up"
-      - "razao_dist_back_hip_por_dist_hip_hook_up"
-      - "bbox_aspect_ratio"
-      - "pca_excentricidade"
-      - "sc_pin_up_y"
-      - "angulo_hook_up_pin_up_tail_head"
-      - "angulo_hook_up_hip_tail_head"
-      - "sc_hook_up_y"
-      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up"
-      - "angulo_hook_up_back_hook_down"
-      - "sc_back_y"
-      - "angulo_pin_up_hip_pin_down"
-      - "sc_back_x"
-      - "dist_back_hook_up"
-      - "sc_hip_y"
-      - "area_poligono_pelvico_norm"
-      - "sc_hook_down_y"
-      - "sc_hook_up_x"
-      - "sc_pin_up_x"
-      - "bbox_area_norm"
-      - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down"
-      - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down"
-      - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up"
-      - "razao_dist_hip_hook_up_por_dist_hip_tail_head"
-      # - "razao_dist_hip_hook_down_por_dist_hip_tail_head"
-      # - "razao_dist_back_hip_por_dist_hip_tail_head"
-      # - "razao_dist_back_hip_por_dist_hip_hook_down"
-      # - "razao_dist_back_hip_por_dist_hip_pin_up"
-      # - "razao_dist_back_hip_por_dist_hip_pin_down"
-      # - "razao_largura_hooks_por_largura_pins"
-      # - "angulo_hook_up_hip_hook_down"
-      # - "angulo_hip_hook_up_pin_up"
-      # - "angulo_hip_hook_down_pin_down"
-      # - "angulo_hook_down_hip_tail_head"
-      # - "angulo_pin_up_tail_head_pin_down"
-      # - "angulo_withers_back_tail_head"
-      # - "area_triangulo_torax_norm"
-      # - "indice_robustez"
-      # - "indice_triangulo_traseiro"
-      # - "desvio_coluna_back_norm"
-      # - "desvio_coluna_hip_norm"
-      # - "sc_withers_x"
-      # - "sc_withers_y"
-      # - "sc_hook_down_x"
-      # - "sc_hip_x"
-      # - "sc_tail_head_x"
-      # - "sc_tail_head_y"
-      # - "sc_pin_down_x"
-      # - "sc_pin_down_y"
+      - "dist_hip_tail_head" # Distancia quadril-cauda (comprimento posterior)
+      - "dist_tail_head_pin_up" # Distancia cauda-pin_up
+      - "razao_dist_back_hip_por_dist_hip_hook_up" # Proporcao dorso/quadril para hook_up
+      - "bbox_aspect_ratio" # Razao largura/altura do bbox da vaca
+      - "pca_excentricidade" # Alongamento global da nuvem de keypoints (PCA)
+      - "sc_pin_up_y" # Shape-context Y do pin_up no referencial withers->tail_head
+      - "angulo_hook_up_pin_up_tail_head" # Angulo hook_up-pin_up-tail_head
+      - "angulo_hook_up_hip_tail_head" # Angulo hook_up-hip-tail_head
+      - "sc_hook_up_y" # Shape-context Y do hook_up
+      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up" # Proporcao entre segmentos do quadril superior
+      - "angulo_hook_up_back_hook_down" # Angulo hook_up-back-hook_down
+      - "sc_back_y" # Shape-context Y do back
+      - "angulo_pin_up_hip_pin_down" # Abertura pin_up-hip-pin_down
+      - "sc_back_x" # Shape-context X do back
+      - "dist_back_hook_up" # Distancia back-hook_up
+      - "sc_hip_y" # Shape-context Y do hip
+      - "area_poligono_pelvico_norm" # Area pelvica normalizada pelo bbox
+      - "sc_hook_down_y" # Shape-context Y do hook_down
+      - "sc_hook_up_x" # Shape-context X do hook_up
+      - "sc_pin_up_x" # Shape-context X do pin_up
+      - "bbox_area_norm" # Area do bbox normalizada pela area da imagem
+      - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down" # Proporcao entre segmentos do quadril inferior
+      - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down" # Proporcao quadril-cauda vs base inferior
+      - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up" # Proporcao quadril-cauda vs base superior
+      - "razao_dist_hip_hook_up_por_dist_hip_tail_head" # Proporcao hook_up em relacao ao eixo hip-tail_head
+      # - "razao_dist_hip_hook_down_por_dist_hip_tail_head" # Proporcao hook_down em relacao ao eixo hip-tail_head
+      # - "razao_dist_back_hip_por_dist_hip_tail_head" # Proporcao tronco traseiro no eixo longitudinal
+      # - "razao_dist_back_hip_por_dist_hip_hook_down" # Proporcao back-hip vs hip-hook_down
+      # - "razao_dist_back_hip_por_dist_hip_pin_up" # Proporcao back-hip vs hip-pin_up
+      # - "razao_dist_back_hip_por_dist_hip_pin_down" # Proporcao back-hip vs hip-pin_down
+      # - "razao_largura_hooks_por_largura_pins" # Largura entre hooks dividida pela largura entre pins
+      # - "angulo_hook_up_hip_hook_down" # Abertura pelvica no quadril
+      # - "angulo_hip_hook_up_pin_up" # Angulo lateral superior da pelve
+      # - "angulo_hip_hook_down_pin_down" # Angulo lateral inferior da pelve
+      # - "angulo_hook_down_hip_tail_head" # Angulo hook_down-hip-tail_head
+      # - "angulo_pin_up_tail_head_pin_down" # Abertura na regiao da cauda entre pins
+      # - "angulo_withers_back_tail_head" # Angulo da linha dorsal (withers-back-tail_head)
+      # - "area_triangulo_torax_norm" # Area toracica normalizada
+      # - "indice_robustez" # Largura de hooks / comprimento withers-tail_head
+      # - "indice_triangulo_traseiro" # Area do triangulo hip-pin_up-pin_down normalizada
+      # - "desvio_coluna_back_norm" # Desvio perpendicular de back na linha withers-tail_head
+      # - "desvio_coluna_hip_norm" # Desvio perpendicular de hip na linha withers-tail_head
+      # - "sc_withers_x" # Shape-context X do withers
+      # - "sc_withers_y" # Shape-context Y do withers
+      # - "sc_hook_down_x" # Shape-context X do hook_down
+      # - "sc_hip_x" # Shape-context X do hip
+      # - "sc_tail_head_x" # Shape-context X do tail_head
+      # - "sc_tail_head_y" # Shape-context Y do tail_head
+      # - "sc_pin_down_x" # Shape-context X do pin_down
+      # - "sc_pin_down_y" # Shape-context Y do pin_down
 
 paths:
   raw: "dados/raw"

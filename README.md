@@ -11,7 +11,7 @@ Este repositório implementa um pipeline em 3 fases:
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
 3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF)**  
-   Treina um classificador tabular (**XGBoost por padrão; CatBoost e RandomForest como alternativas**) e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
+   Treina um classificador tabular configurável via `classificacao.modelo_padrao` e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
 
@@ -103,8 +103,7 @@ dados/raw/dataset_keypoints/
       ...
 ```
 - Pode haver múltiplas vacas por imagem.
-- Label Studio tem visibilidade **visível/oculto**.  
-  Pontos fora do quadro **não aparecem** na anotação (tratados como inexistentes).
+- Pontos fora do quadro **não aparecem** na anotação (tratados como inexistentes).
 - Cenário real: filmagem **de cima** (não há uma vaca passando por cima de outra).  
   Pode haver **overlap leve de bordas** dos bboxes; por isso, a associação keypoint↔bbox usa tolerância (2–5 px).
 
@@ -125,7 +124,8 @@ dados/raw/dataset_classificacao/
 ```text
 0 xc yc w h k1x k1y k1v ... k8x k8y k8v
 ```
-- `v`: 2 (visível), 1 (oculto), 0 (inexistente).
+- `v`: 2 (keypoint presente), 0 (inexistente).  
+  *(No pipeline atual, keypoints anotados são exportados como presentes e keypoints ausentes como inexistentes.)*
 
 ---
 
@@ -140,6 +140,7 @@ Principais parâmetros:
 - `classificacao.modelo_padrao` (`xgboost`, `catboost` ou `sklearn_rf`)
 - `classificacao.features.selecionadas`
 - `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
+- `classificacao.filtro_confianca_pose` (gate de qualidade da pose antes de gerar/classificar features)
 - `classificacao.validacao_interna.usar_apenas_real` (validação interna só com instâncias reais)
 
 ---
@@ -322,7 +323,7 @@ python -m src.cli avaliar-classificador
 Executa o fluxo completo para uma nova imagem:
 1. Detecta pose (YOLO).
 2. Extrai features.
-3. Classifica (XGBoost).
+3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost` ou `sklearn_rf`).
 ```bash
 python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
 ```
@@ -342,17 +343,21 @@ python -m src.cli pipeline-completo
   - `saidas/relatorios/metricas_pose.json`
 - Classificação:
   - `saidas/relatorios/metricas_classificacao.json`
-  - `saidas/relatorios/metricas_classificacao_treino.json`
-  - `saidas/relatorios/matriz_confusao.png`
-  - `saidas/relatorios/matriz_confusao.csv`
-  - `saidas/relatorios/metricas_por_classe.png`
-  - `saidas/relatorios/confianca_corretas_vs_incorretas.png`
-  - `saidas/relatorios/cobertura_vs_acuracia.png`
-  - `saidas/relatorios/xgb_curva_mlogloss.png`
-  - `saidas/relatorios/xgb_curva_merror.png`
-  - `saidas/relatorios/xgb_gap_mlogloss.png`
-  - `saidas/relatorios/xgb_gap_merror.png`
-  - `saidas/relatorios/xgb_importancia_gain_topn.png`
+- `saidas/relatorios/metricas_classificacao_treino.json`
+- `saidas/relatorios/matriz_confusao.png`
+- `saidas/relatorios/matriz_confusao.csv`
+- `saidas/relatorios/metricas_por_classe.png`
+- `saidas/relatorios/confianca_corretas_vs_incorretas.png`
+- `saidas/relatorios/cobertura_vs_acuracia.png`
+- `saidas/relatorios/xgb_curva_mlogloss.png`
+- `saidas/relatorios/xgb_curva_merror.png`
+- `saidas/relatorios/xgb_gap_mlogloss.png`
+- `saidas/relatorios/xgb_gap_merror.png`
+- `saidas/relatorios/xgb_importancia_gain_topn.png`
+ - `saidas/relatorios/rf_importancia_topn.png`
+ - `saidas/relatorios/rf_otimizacao_trials.png`
+ - `saidas/relatorios/catboost_importancia_topn.png`
+ - `saidas/relatorios/catboost_otimizacao_trials.png`
 
 ---
 

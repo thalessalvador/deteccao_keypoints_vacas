@@ -10,7 +10,7 @@ from ultralytics import YOLO
 import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
-from ..classificacao.gerador_dataset_features import _selecionar_instancia_alvo, _normalizar_orientacao_keypoints, _calcular_features_geometricas
+from ..classificacao.gerador_dataset_features import _selecionar_instancia_alvo, _normalizar_orientacao_keypoints, _calcular_features_geometricas, _ler_cfg_filtro_confianca_pose, _calcular_confianca_media_keypoints
 
 def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int = 3, desenhar: bool = False, logger: logging.Logger = None) -> Dict[str, Any]:
     """
@@ -99,6 +99,23 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         msg = "Nenhuma vaca detectada com confiança suficiente."
         logger.warning(msg)
         return {"erro": msg, "detecao_pose": False}
+
+    cfg_filtro_pose = _ler_cfg_filtro_confianca_pose(config)
+    conf_media_kpts = _calcular_confianca_media_keypoints(
+        kpts=instancia_kpts,
+        conf_min_keypoint_visivel=cfg_filtro_pose["conf_min_keypoint_visivel"],
+    )
+    if cfg_filtro_pose["habilitar"] and conf_media_kpts < cfg_filtro_pose["conf_media_min"]:
+        msg = (
+            "Instancia descartada por baixa confianca media de keypoints "
+            f"({conf_media_kpts:.4f} < {cfg_filtro_pose['conf_media_min']:.4f})."
+        )
+        logger.warning(msg)
+        return {
+            "erro": msg,
+            "detecao_pose": True,
+            "confianca_media_keypoints": conf_media_kpts,
+        }
         
     # 4. Calcular Features
     kpts = instancia_kpts
@@ -138,6 +155,7 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         "arquivo": img_path.name,
         "classe_predita": pred_label,
         "confianca": confianca,
+        "confianca_media_keypoints": conf_media_kpts,
         "top_k": top_preds,
         "features": feats_dict,
         "bbox": instancia_bbox

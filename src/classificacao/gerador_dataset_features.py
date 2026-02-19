@@ -17,6 +17,45 @@ ORIGEM_REAL = "real"
 ORIGEM_AUG = "augmentation"
 
 
+def _ler_cfg_filtro_confianca_pose(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Le e normaliza as configuracoes de filtro por confianca de keypoints da pose.
+
+    Args:
+        config (Dict[str, Any]): Configuracao global carregada do YAML.
+
+    Returns:
+        Dict[str, Any]: Configuracoes efetivas do filtro de confianca.
+    """
+    cls_cfg = config.get("classificacao", {})
+    filtro_cfg = cls_cfg.get("filtro_confianca_pose", {})
+    return {
+        "habilitar": bool(filtro_cfg.get("habilitar", False)),
+        "conf_media_min": float(filtro_cfg.get("conf_media_min", 0.50)),
+        "conf_min_keypoint_visivel": float(filtro_cfg.get("conf_min_keypoint_visivel", 0.01)),
+    }
+
+
+def _calcular_confianca_media_keypoints(kpts: np.ndarray, conf_min_keypoint_visivel: float) -> float:
+    """
+    Calcula a confianca media dos keypoints visiveis da instancia.
+
+    Args:
+        kpts (np.ndarray): Matriz de keypoints no formato (N, 3) [x, y, conf].
+        conf_min_keypoint_visivel (float): Limiar minimo para considerar um keypoint visivel.
+
+    Returns:
+        float: Media das confiancas dos keypoints visiveis; 0.0 se nao houver keypoints validos.
+    """
+    if kpts.size == 0 or kpts.ndim != 2 or kpts.shape[1] < 3:
+        return 0.0
+    confs = kpts[:, 2]
+    validos = confs[confs >= conf_min_keypoint_visivel]
+    if validos.size == 0:
+        return 0.0
+    return float(np.mean(validos))
+
+
 def _ler_cfg_augmentacao_keypoints(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Le e normaliza as configuracoes de augmentation de keypoints da classificacao.
@@ -169,10 +208,12 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
     test_names = {p.name for p in all_test}
 
     cfg_aug = _ler_cfg_augmentacao_keypoints(config)
+    cfg_filtro_pose = _ler_cfg_filtro_confianca_pose(config)
     dados_features: List[Dict[str, Any]] = []
     imagens_descartadas: List[Dict[str, Any]] = []
     total_aug_geradas = 0
     total_aug_descartadas_sem_kp = 0
+    total_descartadas_baixa_conf_pose = 0
     
     logger.info(f"Processando {len(classes_dirs)} classes (vacas)...")
     
@@ -191,6 +232,24 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
                 
                 if instancia_kpts is None:
                     imagens_descartadas.append({"arquivo": img_path.name, "classe": cow_id, "motivo": "Nenhuma instancia confiavel"})
+                    continue
+
+                conf_media_kpts = _calcular_confianca_media_keypoints(
+                    kpts=instancia_kpts,
+                    conf_min_keypoint_visivel=cfg_filtro_pose["conf_min_keypoint_visivel"],
+                )
+                if cfg_filtro_pose["habilitar"] and conf_media_kpts < cfg_filtro_pose["conf_media_min"]:
+                    imagens_descartadas.append(
+                        {
+                            "arquivo": img_path.name,
+                            "classe": cow_id,
+                            "motivo": (
+                                "Confianca media de keypoints baixa "
+                                f"({conf_media_kpts:.4f} < {cfg_filtro_pose['conf_media_min']:.4f})"
+                            ),
+                        }
+                    )
+                    total_descartadas_baixa_conf_pose += 1
                     continue
                 
                 # Normalizar orientação (se ativado)
@@ -278,6 +337,12 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
                 f"Augmentation keypoints - n_copias: {cfg_aug['n_copias']} | noise_std_xy: {cfg_aug['noise_std_xy']} | "
                 f"deterministico: {cfg_aug['deterministico']} | seed: {cfg_aug['seed']} | "
                 f"geradas: {total_aug_geradas} | descartadas_sem_kp_valido: {total_aug_descartadas_sem_kp}"
+            )
+        if cfg_filtro_pose["habilitar"]:
+            logger.info(
+                f"Filtro confianca pose - conf_media_min: {cfg_filtro_pose['conf_media_min']} | "
+                f"conf_min_keypoint_visivel: {cfg_filtro_pose['conf_min_keypoint_visivel']} | "
+                f"descartadas_baixa_conf_pose: {total_descartadas_baixa_conf_pose}"
             )
     
     logger.info(f"Features geradas com sucesso: {out_csv} ({len(df)} registros)")
