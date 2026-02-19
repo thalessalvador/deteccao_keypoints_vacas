@@ -1274,6 +1274,7 @@ def _treinar_rf(
     
     model_path = models_dir / "rf_model.joblib"
     joblib.dump(clf, model_path)
+    joblib.dump(feature_cols, models_dir / "feature_names.pkl")
     logger.info(f"Modelo salvo em {model_path}")
 
     feature_importance = _extrair_importancia_rf(clf, list(X.columns), top_n=config_cls.get("top_n_importancias", 20))
