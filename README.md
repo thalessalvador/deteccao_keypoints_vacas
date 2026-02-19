@@ -1,6 +1,8 @@
 ﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF)
 
 ## Visão geral
+![Desafio do projeto de identificação de vacas](Cows_challenge.png)
+
 Este repositório implementa um pipeline em 3 fases:
 
 1. **Fase 1 — Pose/Keypoints (YOLO Pose)**  
