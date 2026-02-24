@@ -43,3 +43,6 @@ catboost_info/
 
 # Build local
 build/
+
+# Metadados de empacotamento Python (gerados)
+*.egg-info/

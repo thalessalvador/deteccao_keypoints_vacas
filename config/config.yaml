@@ -79,6 +79,16 @@ classificacao:
     habilitar: true # Liga/desliga o filtro de confianca media dos 8 keypoints
     conf_media_min: 0.50 # Limiar minimo da MEDIA (apos filtro) para aceitar a instancia
     conf_min_keypoint_visivel: 0.01 # Limiar minimo por keypoint para ele entrar no calculo da media
+  rejeicao_predicao:
+    # Gatilho de "NAO_IDENTIFICADO" no backend de inferencia/classificacao.
+    # A predicao e rejeitada se:
+    # 1) confianca_top1 < confianca_min
+    # OU
+    # 2) (confianca_top1 - confianca_top2) < margem_top1_top2_min
+    habilitar: true
+    confianca_min: 0.35
+    margem_top1_top2_min: 0.00
+    rotulo_nao_identificado: "NAO_IDENTIFICADO"
   validacao_interna:
     fracao: 0.2
     early_stopping_rounds: 50
@@ -138,7 +148,7 @@ classificacao:
       - "dist_hip_tail_head" # Distancia quadril-cauda (comprimento posterior)
       - "dist_tail_head_pin_up" # Distancia cauda-pin_up
       - "razao_dist_back_hip_por_dist_hip_hook_up" # Proporcao dorso/quadril para hook_up
-      - "bbox_aspect_ratio" # Razao largura/altura do bbox da vaca
+      # - "bbox_aspect_ratio" # Razao largura/altura do bbox da vaca (desativada para reduzir vies de perspectiva)
       - "pca_excentricidade" # Alongamento global da nuvem de keypoints (PCA)
       - "sc_pin_up_y" # Shape-context Y do pin_up no referencial withers->tail_head
       - "angulo_hook_up_pin_up_tail_head" # Angulo hook_up-pin_up-tail_head
@@ -155,7 +165,7 @@ classificacao:
       - "sc_hook_down_y" # Shape-context Y do hook_down
       - "sc_hook_up_x" # Shape-context X do hook_up
       - "sc_pin_up_x" # Shape-context X do pin_up
-      - "bbox_area_norm" # Area do bbox normalizada pela area da imagem
+      # - "bbox_area_norm" # Area do bbox normalizada pela area da imagem (desativada para reduzir vies de perspectiva)
       - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down" # Proporcao entre segmentos do quadril inferior
       - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down" # Proporcao quadril-cauda vs base inferior
       - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up" # Proporcao quadril-cauda vs base superior

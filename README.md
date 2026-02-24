@@ -143,6 +143,7 @@ Principais parâmetros:
 - `classificacao.features.selecionadas`
 - `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
 - `classificacao.filtro_confianca_pose` (gate de qualidade da pose antes de gerar/classificar features)
+- `classificacao.rejeicao_predicao` (gatilho de `NAO_IDENTIFICADO` por confiança top-1 e margem top1-top2)
 - `classificacao.validacao_interna.usar_apenas_real` (validação interna só com instâncias reais)
 
 ---

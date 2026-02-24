@@ -12,6 +12,26 @@ import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
 
+
+def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Le e normaliza as configuracoes de rejeicao de predicao.
+
+    Args:
+        config (Dict[str, Any]): Configuracao global.
+
+    Returns:
+        Dict[str, Any]: Configuracao efetiva de rejeicao.
+    """
+    cfg = config.get("classificacao", {}).get("rejeicao_predicao", {})
+    return {
+        "habilitar": bool(cfg.get("habilitar", False)),
+        "confianca_min": float(cfg.get("confianca_min", 0.35)),
+        "margem_top1_top2_min": float(cfg.get("margem_top1_top2_min", 0.0)),
+        "rotulo_nao_identificado": str(cfg.get("rotulo_nao_identificado", "NAO_IDENTIFICADO")),
+    }
+
+
 def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> None:
     """
     avaliar_classificador: Avalia o modelo no conjunto de teste (10%).
@@ -109,6 +129,9 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
     if probs.ndim == 1:
         probs = np.vstack([1.0 - probs, probs]).T
     conf_max = probs.max(axis=1).reshape(-1)
+    probs_sorted = np.sort(probs, axis=1)
+    conf_top2 = probs_sorted[:, -2] if probs.shape[1] > 1 else np.zeros_like(conf_max)
+    margem_top1_top2 = conf_max - conf_top2
     acertos = (preds == y_test).reshape(-1)
     
     # Métricas
@@ -126,6 +149,47 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         f"RESULTADO FINAL (Teste): Acurácia: {acc:.4f}, Precision-Macro: {prec:.4f}, "
         f"Recall-Macro: {rec:.4f}, F1-Macro: {f1:.4f}"
     )
+
+    # Metricas com rejeicao opcional (NAO_IDENTIFICADO)
+    cfg_rejeicao = _ler_cfg_rejeicao_predicao(config)
+    resumo_rejeicao = None
+    if cfg_rejeicao["habilitar"]:
+        aceitas = (conf_max >= cfg_rejeicao["confianca_min"]) & (
+            margem_top1_top2 >= cfg_rejeicao["margem_top1_top2_min"]
+        )
+        cobertura_rejeicao = float(np.mean(aceitas))
+        rejeitadas = int(np.sum(~aceitas))
+        aceitas_n = int(np.sum(aceitas))
+        if aceitas_n > 0:
+            acc_aceitas = float(np.mean(acertos[aceitas]))
+            prec_aceitas = float(precision_score(y_test[aceitas], preds[aceitas], average="macro", zero_division=0))
+            rec_aceitas = float(recall_score(y_test[aceitas], preds[aceitas], average="macro", zero_division=0))
+            f1_aceitas = float(f1_score(y_test[aceitas], preds[aceitas], average="macro", zero_division=0))
+        else:
+            acc_aceitas = 0.0
+            prec_aceitas = 0.0
+            rec_aceitas = 0.0
+            f1_aceitas = 0.0
+        resumo_rejeicao = {
+            "confianca_min": cfg_rejeicao["confianca_min"],
+            "margem_top1_top2_min": cfg_rejeicao["margem_top1_top2_min"],
+            "cobertura": cobertura_rejeicao,
+            "rejeitadas": rejeitadas,
+            "aceitas": aceitas_n,
+            "metricas_aceitas": {
+                "accuracy": acc_aceitas,
+                "precision_macro": prec_aceitas,
+                "recall_macro": rec_aceitas,
+                "f1_macro": f1_aceitas,
+            },
+        }
+        logger.info(
+            "COM REJEICAO - Cobertura: %.4f | Rejeitadas: %d | Acuracia(aceitas): %.4f | F1(aceitas): %.4f",
+            cobertura_rejeicao,
+            rejeitadas,
+            acc_aceitas,
+            f1_aceitas,
+        )
     
     # Matriz de Confusão
     cm = confusion_matrix(y_test, preds)
@@ -207,6 +271,7 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         "accuracy": acc,
         "f1_macro": f1,
         "top_k_accuracy": topk_metrics,
+        "rejeicao_predicao": resumo_rejeicao,
         "confidence_analysis": {
             "media_conf_corretas": float(np.mean(conf_max[acertos])) if np.any(acertos) else None,
             "media_conf_incorretas": float(np.mean(conf_max[~acertos])) if np.any(~acertos) else None

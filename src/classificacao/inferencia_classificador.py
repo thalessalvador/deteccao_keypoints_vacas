@@ -12,6 +12,25 @@ import xgboost as xgb
 from ..util.io_arquivos import garantir_diretorio
 from ..classificacao.gerador_dataset_features import _selecionar_instancia_alvo, _normalizar_orientacao_keypoints, _calcular_features_geometricas, _ler_cfg_filtro_confianca_pose, _calcular_confianca_media_keypoints
 
+
+def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Le e normaliza as configuracoes de rejeicao de predicao.
+
+    Args:
+        config (Dict[str, Any]): Configuracao global.
+
+    Returns:
+        Dict[str, Any]: Configuracao efetiva de rejeicao.
+    """
+    cfg = config.get("classificacao", {}).get("rejeicao_predicao", {})
+    return {
+        "habilitar": bool(cfg.get("habilitar", False)),
+        "confianca_min": float(cfg.get("confianca_min", 0.35)),
+        "margem_top1_top2_min": float(cfg.get("margem_top1_top2_min", 0.0)),
+        "rotulo_nao_identificado": str(cfg.get("rotulo_nao_identificado", "NAO_IDENTIFICADO")),
+    }
+
 def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int = 3, desenhar: bool = False, logger: logging.Logger = None) -> Dict[str, Any]:
     """
     Realiza a classificação de uma única imagem end-to-end:
@@ -148,13 +167,43 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         label = le.inverse_transform([idx])[0]
         prob = float(probs[idx])
         top_preds.append({"classe": label, "confianca": prob})
-        
-    logger.info(f"Classificação: {pred_label} ({confianca:.2%})")
+
+    # Rejeicao opcional (NAO_IDENTIFICADO)
+    cfg_rejeicao = _ler_cfg_rejeicao_predicao(config)
+    confianca_top2 = float(np.sort(probs)[-2]) if probs.shape[0] > 1 else 0.0
+    margem_top1_top2 = confianca - confianca_top2
+    rejeitado = False
+    motivos_rejeicao: List[str] = []
+    if cfg_rejeicao["habilitar"]:
+        if confianca < cfg_rejeicao["confianca_min"]:
+            rejeitado = True
+            motivos_rejeicao.append(
+                f"confianca_top1<{cfg_rejeicao['confianca_min']:.2f} ({confianca:.4f})"
+            )
+        if margem_top1_top2 < cfg_rejeicao["margem_top1_top2_min"]:
+            rejeitado = True
+            motivos_rejeicao.append(
+                f"margem_top1_top2<{cfg_rejeicao['margem_top1_top2_min']:.2f} ({margem_top1_top2:.4f})"
+            )
+
+    classe_final = cfg_rejeicao["rotulo_nao_identificado"] if rejeitado else pred_label
+    if rejeitado:
+        logger.info(
+            f"Classificacao rejeitada: {pred_label} ({confianca:.2%}), "
+            f"margem={margem_top1_top2:.4f}, motivos={motivos_rejeicao}"
+        )
+    else:
+        logger.info(f"Classificação: {pred_label} ({confianca:.2%})")
     
     retorno = {
         "arquivo": img_path.name,
-        "classe_predita": pred_label,
+        "classe_predita": classe_final,
+        "classe_predita_modelo": pred_label,
         "confianca": confianca,
+        "confianca_top2": confianca_top2,
+        "margem_top1_top2": margem_top1_top2,
+        "rejeitado": rejeitado,
+        "motivos_rejeicao": motivos_rejeicao,
         "confianca_media_keypoints": conf_media_kpts,
         "top_k": top_preds,
         "features": feats_dict,
@@ -183,7 +232,7 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
             # Desenhar Keypoints e Skeleton
             # Iterar kpts e desenhar
             # (Simplificação: desenhar label no canto)
-            cv2.putText(img, f"Pred: {pred_label} ({confianca:.1%})", (10, 30), 
+            cv2.putText(img, f"Pred: {classe_final} ({confianca:.1%})", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
             # Listar Top 3
