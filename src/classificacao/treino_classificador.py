@@ -1,16 +1,22 @@
 import logging
 import json
 import joblib
+import warnings
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, log_loss
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupShuffleSplit
+from sklearn.svm import SVC
+from sklearn.neural_network import MLPClassifier
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from ..util.io_arquivos import garantir_diretorio
 
@@ -131,6 +137,10 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
         return _treinar_catboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
     elif model_type == "sklearn_rf":
         return _treinar_rf(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
+    elif model_type == "svm":
+        return _treinar_svm(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
+    elif model_type == "mlp":
+        return _treinar_mlp(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     else:
         logger.warning(f"Modelo {model_type} desconhecido. Usando XGBoost.")
         return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
@@ -146,6 +156,17 @@ def _preparar_split_interno_com_grupos(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
     """
     Prepara split interno por grupos (arquivo), com opcao de validacao apenas em amostras reais.
+
+    Parametros:
+        X (pd.DataFrame): Matriz de features completa.
+        y (np.ndarray): Vetor de classes.
+        groups (np.ndarray): Vetor de grupos para evitar vazamento entre treino/validacao.
+        origem_instancia (np.ndarray): Origem da instancia (real/augmentada) por amostra.
+        config_cls (Dict[str, Any]): Configuracoes da etapa de classificacao.
+        logger (logging.Logger): Logger para mensagens operacionais.
+
+    Retorno:
+        Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]: X_train, X_val, y_train, y_val.
     """
     val_frac = config_cls.get("validacao_interna", {}).get("fracao", 0.2)
     gss = GroupShuffleSplit(n_splits=1, test_size=val_frac, random_state=42)
@@ -345,6 +366,14 @@ def _obter_parametros_base_xgboost(
 ) -> Dict[str, Any]:
     """
     Monta parametros base do XGBoost a partir do config (com defaults seguros).
+
+    Parametros:
+        config_cls (Dict[str, Any]): Configuracoes de classificacao.
+        num_class (int): Quantidade de classes do problema.
+        early_stopping_rounds (int): Rodadas para early stopping.
+
+    Retorno:
+        Dict[str, Any]: Dicionario de parametros base para o XGBoost.
     """
     cfg_xgb = config_cls.get("xgboost", {})
     device_cfg = str(cfg_xgb.get("device", config_cls.get("device", "cpu"))).lower()
@@ -376,6 +405,12 @@ def _amostrar_parametros_xgboost_random(
 ) -> Dict[str, Any]:
     """
     Gera uma amostra aleatoria de hiperparametros para XGBoost.
+
+    Parametros:
+        gerador (np.random.Generator): Gerador pseudoaleatorio.
+
+    Retorno:
+        Dict[str, Any]: Hiperparametros amostrados para um trial.
     """
     return {
         "n_estimators": int(gerador.integers(400, 1601)),
@@ -400,6 +435,17 @@ def _avaliar_xgboost_em_validacao(
 ) -> float:
     """
     Treina um XGBoost com parametros trial e retorna F1-macro na validacao.
+
+    Parametros:
+        X_train (pd.DataFrame): Features de treino.
+        y_train (np.ndarray): Rotulos de treino.
+        X_val (pd.DataFrame): Features de validacao.
+        y_val (np.ndarray): Rotulos de validacao.
+        params_base (Dict[str, Any]): Parametros base do modelo.
+        params_trial (Dict[str, Any]): Parametros candidatos do trial.
+
+    Retorno:
+        float: Valor de F1-macro na validacao.
     """
     params = dict(params_base)
     params.update(params_trial)
@@ -425,6 +471,18 @@ def _otimizar_hiperparametros_xgboost(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Otimiza hiperparametros do XGBoost por Optuna (preferencial) ou random search.
+
+    Parametros:
+        X_train (pd.DataFrame): Features de treino.
+        y_train (np.ndarray): Rotulos de treino.
+        X_val (pd.DataFrame): Features de validacao.
+        y_val (np.ndarray): Rotulos de validacao.
+        params_base (Dict[str, Any]): Parametros base do modelo.
+        config_cls (Dict[str, Any]): Configuracoes da classificacao.
+        logger (logging.Logger): Logger para mensagens de progresso.
+
+    Retorno:
+        Tuple[Dict[str, Any], Dict[str, Any]]: Melhor conjunto de parametros e resumo da otimizacao.
     """
     cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
     metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
@@ -534,6 +592,21 @@ def _treinar_catboost(
 ) -> Path:
     """
     Treina modelo CatBoost com split interno por grupos (arquivo) e early stopping.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes de classificacao.
+        models_dir (Path): Diretorio para salvar modelos.
+        reports_dir (Path): Diretorio para salvar relatorios.
+        feature_cols (List[str]): Lista de nomes das features.
+        aug_stats (Dict[str, Any]): Estatisticas de augmentacao.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do modelo salvo.
     """
     try:
         from catboost import CatBoostClassifier
@@ -648,6 +721,13 @@ def _obter_parametros_base_catboost(
 ) -> Dict[str, Any]:
     """
     Monta parametros base do CatBoost a partir do config (com defaults seguros).
+
+    Parametros:
+        config_cls (Dict[str, Any]): Configuracoes de classificacao.
+        num_class (int): Quantidade de classes.
+
+    Retorno:
+        Dict[str, Any]: Dicionario de parametros base para o CatBoost.
     """
     cfg_cb = config_cls.get("catboost", {})
     device_cfg = str(cfg_cb.get("device", config_cls.get("device", "cpu"))).lower()
@@ -678,6 +758,13 @@ def _amostrar_parametros_catboost_random(
 ) -> Dict[str, Any]:
     """
     Gera amostra aleatoria de hiperparametros para CatBoost.
+
+    Parametros:
+        gerador (np.random.Generator): Gerador pseudoaleatorio.
+        usar_rsm (bool): Indica se o parametro rsm pode ser usado no backend atual.
+
+    Retorno:
+        Dict[str, Any]: Parametros candidatos para um trial.
     """
     params_trial: Dict[str, Any] = {
         "iterations": int(gerador.integers(400, 1601)),
@@ -703,6 +790,18 @@ def _avaliar_catboost_em_validacao(
 ) -> float:
     """
     Treina um CatBoost com parametros trial e retorna F1-macro na validacao.
+
+    Parametros:
+        X_train (pd.DataFrame): Features de treino.
+        y_train (np.ndarray): Rotulos de treino.
+        X_val (pd.DataFrame): Features de validacao.
+        y_val (np.ndarray): Rotulos de validacao.
+        params_base (Dict[str, Any]): Parametros base do modelo.
+        params_trial (Dict[str, Any]): Parametros candidatos do trial.
+        early_stopping_rounds (int): Rodadas para early stopping.
+
+    Retorno:
+        float: F1-macro na validacao.
     """
     from catboost import CatBoostClassifier
 
@@ -733,6 +832,19 @@ def _otimizar_hiperparametros_catboost(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Otimiza hiperparametros do CatBoost por Optuna (preferencial) ou random search.
+
+    Parametros:
+        X_train (pd.DataFrame): Features de treino.
+        y_train (np.ndarray): Rotulos de treino.
+        X_val (pd.DataFrame): Features de validacao.
+        y_val (np.ndarray): Rotulos de validacao.
+        params_base (Dict[str, Any]): Parametros base.
+        config_cls (Dict[str, Any]): Configuracoes da classificacao.
+        early_stopping_rounds (int): Rodadas para early stopping.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Tuple[Dict[str, Any], Dict[str, Any]]: Melhor conjunto de parametros e resumo da busca.
     """
     cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
     metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
@@ -840,6 +952,14 @@ def _extrair_importancia_catboost(
 ) -> Dict[str, Any]:
     """
     Extrai ranking de importancia do CatBoost.
+
+    Parametros:
+        clf (Any): Modelo CatBoost treinado.
+        feature_cols (List[str]): Nomes das features.
+        top_n (int): Quantidade de features no ranking principal.
+
+    Retorno:
+        Dict[str, Any]: Estrutura de importancia no formato do relatorio.
     """
     importancias = [float(v) for v in clf.get_feature_importance()]
     linhas = []
@@ -866,6 +986,14 @@ def _extrair_importancia_rf(
 ) -> Dict[str, Any]:
     """
     Extrai ranking de importancia de features do RandomForest.
+
+    Parametros:
+        clf (RandomForestClassifier): Modelo RF treinado.
+        feature_cols (List[str]): Nomes das features.
+        top_n (int): Quantidade de features no ranking principal.
+
+    Retorno:
+        Dict[str, Any]: Estrutura de importancia no formato do relatorio.
     """
     scores = [float(v) for v in clf.feature_importances_]
     linhas = [
@@ -890,6 +1018,17 @@ def _salvar_grafico_importancia_generico(
 ) -> None:
     """
     Salva grafico horizontal da importancia de features para modelos tabulares.
+
+    Parametros:
+        feature_importance (Dict[str, Any]): Dicionario com ranking de importancia.
+        chave_top_n (str): Chave do ranking a ser plotado.
+        reports_dir (Path): Diretorio de saida dos graficos.
+        nome_arquivo (str): Nome do arquivo de saida.
+        titulo (str): Titulo do grafico.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        None: Salva arquivo de grafico em disco.
     """
     linhas = feature_importance.get(chave_top_n, [])
     if not linhas:
@@ -917,6 +1056,16 @@ def _salvar_grafico_otimizacao_generico(
 ) -> None:
     """
     Salva curva de evolução de trials quando historico de otimizacao estiver disponivel.
+
+    Parametros:
+        resumo_otimizacao (Optional[Dict[str, Any]]): Resumo com historico de trials.
+        reports_dir (Path): Diretorio de saida dos graficos.
+        nome_arquivo (str): Nome do arquivo de saida.
+        titulo (str): Titulo do grafico.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        None: Salva arquivo de grafico em disco.
     """
     if not resumo_otimizacao:
         return
@@ -987,6 +1136,14 @@ def _extrair_importancia_xgboost(clf: xgb.XGBClassifier, feature_cols: List[str]
     - weight: quantidade de vezes que a feature foi usada
     - cover: cobertura mÃ©dia das divisÃµes
     - sklearn: feature_importances_ do wrapper sklearn
+
+    Parametros:
+        clf (xgb.XGBClassifier): Modelo XGBoost treinado.
+        feature_cols (List[str]): Lista de nomes das features.
+        top_n (int): Quantidade de features no ranking principal.
+
+    Retorno:
+        Dict[str, Any]: Dicionario com rankings por diferentes criterios.
     """
     booster = clf.get_booster()
     fmap = {f"f{i}": nome for i, nome in enumerate(feature_cols)}
@@ -1000,6 +1157,12 @@ def _extrair_importancia_xgboost(clf: xgb.XGBClassifier, feature_cols: List[str]
         O XGBoost pode retornar:
         - 'f0', 'f1', ... (quando usa índice interno)
         - nome da coluna (quando treinado com DataFrame/pandas)
+
+        Parametros:
+            raw_scores (Dict[str, float]): Scores brutos por feature.
+
+        Retorno:
+            Dict[str, float]: Scores normalizados para chaves no formato f{idx}.
         """
         normalizado: Dict[str, float] = {}
         for k, v in raw_scores.items():
@@ -1018,7 +1181,16 @@ def _extrair_importancia_xgboost(clf: xgb.XGBClassifier, feature_cols: List[str]
         return normalizado
 
     def ordenar_importancia(raw_scores: Dict[str, float], tipo: str) -> List[Dict[str, Any]]:
-        """Monta lista ordenada de importancia no formato padronizado do relatorio."""
+        """
+        Monta lista ordenada de importancia no formato padronizado do relatorio.
+
+        Parametros:
+            raw_scores (Dict[str, float]): Scores brutos por feature.
+            tipo (str): Tipo de importancia (gain, weight, cover, sklearn).
+
+        Retorno:
+            List[Dict[str, Any]]: Lista de features ordenadas por score.
+        """
         scores = normalizar_scores(raw_scores)
         linhas = []
         for f_id, nome in fmap.items():
@@ -1056,6 +1228,15 @@ def _extrair_importancia_xgboost(clf: xgb.XGBClassifier, feature_cols: List[str]
 def _salvar_graficos_xgboost(clf: xgb.XGBClassifier, feature_importance: Dict[str, Any], reports_dir: Path, logger: logging.Logger) -> None:
     """
     Salva gráficos de treino/validação para diagnóstico visual de underfit/overfit.
+
+    Parametros:
+        clf (xgb.XGBClassifier): Modelo treinado.
+        feature_importance (Dict[str, Any]): Estrutura com importancias de features.
+        reports_dir (Path): Diretorio de saida dos graficos.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        None: Salva graficos de treino/validacao e importancia.
     """
     try:
         evals = clf.evals_result()
@@ -1309,3 +1490,518 @@ def _treinar_rf(
         json.dump(metrics, f, indent=2)
     
     return model_path
+
+
+def _treinar_svm(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """
+    Treina SVM (SVC) com split interno por grupos.
+    Usa StandardScaler no pipeline e suporta Optuna/random search.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes da classificacao.
+        models_dir (Path): Diretorio de saida de modelos.
+        reports_dir (Path): Diretorio de saida de relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do modelo salvo.
+    """
+    logger.info("Treinando SVM...")
+    cfg_svm = config_cls.get("svm", {})
+    params_base = {
+        "C": float(cfg_svm.get("C", 1.0)),
+        "kernel": str(cfg_svm.get("kernel", "rbf")),
+        "gamma": cfg_svm.get("gamma", "scale"),
+        "degree": int(cfg_svm.get("degree", 3)),
+        "class_weight": cfg_svm.get("class_weight", None),
+        "probability": True,
+        "random_state": int(cfg_svm.get("random_state", 42)),
+    }
+
+    X_train, X_val, y_train, y_val = _preparar_split_interno_com_grupos(
+        X=X,
+        y=y,
+        groups=groups,
+        origem_instancia=origem_instancia,
+        config_cls=config_cls,
+        logger=logger,
+    )
+
+    params_finais = dict(params_base)
+    cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
+    resumo_otimizacao: Optional[Dict[str, Any]] = None
+    if bool(cfg_otimizacao.get("habilitar", False)):
+        metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
+        n_trials = int(cfg_otimizacao.get("n_trials", 40))
+        seed = int(cfg_otimizacao.get("seed", 42))
+        timeout_segundos = cfg_otimizacao.get("timeout_segundos")
+        historico_trials: List[Dict[str, Any]] = []
+
+        def _avaliar_trial(params_trial: Dict[str, Any]) -> float:
+            params_local = dict(params_base)
+            params_local.update(params_trial)
+            clf_trial = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    ("svm", SVC(**params_local)),
+                ]
+            )
+            clf_trial.fit(X_train, y_train)
+            preds_val = clf_trial.predict(X_val)
+            return float(f1_score(y_val, preds_val, average="macro", zero_division=0))
+
+        if metodo == "optuna":
+            try:
+                import optuna  # type: ignore
+                logger.info(f"Iniciando otimização de hiperparâmetros SVM com Optuna ({n_trials} trials)...")
+                sampler = optuna.samplers.TPESampler(seed=seed)
+                estudo = optuna.create_study(direction="maximize", sampler=sampler)
+
+                def objetivo(trial: Any) -> float:
+                    kernel = trial.suggest_categorical("kernel", ["rbf", "linear", "poly"])
+                    params_trial: Dict[str, Any] = {
+                        "C": trial.suggest_float("C", 1e-2, 1e3, log=True),
+                        "kernel": kernel,
+                        "class_weight": trial.suggest_categorical("class_weight", [None, "balanced"]),
+                    }
+                    if kernel in ("rbf", "poly"):
+                        params_trial["gamma"] = trial.suggest_float("gamma", 1e-4, 1.0, log=True)
+                    if kernel == "poly":
+                        params_trial["degree"] = trial.suggest_int("degree", 2, 4)
+                    return _avaliar_trial(params_trial)
+
+                estudo.optimize(
+                    objetivo,
+                    n_trials=n_trials,
+                    timeout=(int(timeout_segundos) if timeout_segundos else None),
+                    show_progress_bar=False,
+                )
+                params_finais.update(dict(estudo.best_params))
+                resumo_otimizacao = {
+                    "habilitado": True,
+                    "metodo_solicitado": metodo,
+                    "metodo_executado": "optuna",
+                    "n_trials_solicitados": n_trials,
+                    "n_trials_executados": len(estudo.trials),
+                    "melhor_f1_macro": float(estudo.best_value),
+                    "historico_trials": [
+                        {"trial": int(t.number) + 1, "value": (None if t.value is None else float(t.value))}
+                        for t in estudo.trials
+                    ],
+                }
+            except Exception as exc:
+                logger.warning(f"Falha ao usar Optuna para SVM ({exc}). Fallback para random search.")
+                metodo = "random"
+
+        if metodo != "optuna":
+            logger.info(f"Iniciando otimização SVM com random search ({n_trials} trials)...")
+            gerador = np.random.default_rng(seed)
+            melhor_score = -1.0
+            melhor_params: Dict[str, Any] = {}
+            for _ in range(n_trials):
+                kernel = ["rbf", "linear", "poly"][int(gerador.integers(0, 3))]
+                params_trial: Dict[str, Any] = {
+                    "C": float(np.exp(gerador.uniform(np.log(1e-2), np.log(1e3)))),
+                    "kernel": kernel,
+                    "class_weight": ("balanced" if gerador.random() < 0.5 else None),
+                }
+                if kernel in ("rbf", "poly"):
+                    params_trial["gamma"] = float(np.exp(gerador.uniform(np.log(1e-4), np.log(1.0))))
+                if kernel == "poly":
+                    params_trial["degree"] = int(gerador.integers(2, 5))
+                score = _avaliar_trial(params_trial)
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_params = params_trial
+                historico_trials.append({"trial": len(historico_trials) + 1, "value": float(score)})
+            params_finais.update(melhor_params)
+            resumo_otimizacao = {
+                "habilitado": True,
+                "metodo_solicitado": str(cfg_otimizacao.get("metodo", "random")),
+                "metodo_executado": "random_search",
+                "n_trials_solicitados": n_trials,
+                "n_trials_executados": n_trials,
+                "melhor_f1_macro": float(melhor_score),
+                "historico_trials": historico_trials,
+            }
+
+    clf = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("svm", SVC(**params_finais)),
+        ]
+    )
+    clf.fit(X_train, y_train)
+    preds = clf.predict(X_val)
+    acc = accuracy_score(y_val, preds)
+    f1 = f1_score(y_val, preds, average="macro", zero_division=0)
+    logger.info(f"SVM Validação Interna - Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+
+    model_path = models_dir / "svm_model.joblib"
+    joblib.dump(clf, model_path)
+    joblib.dump(list(X.columns), models_dir / "feature_names.pkl")
+    logger.info(f"Modelo salvo em {model_path}")
+
+    _salvar_grafico_otimizacao_generico(
+        resumo_otimizacao=resumo_otimizacao,
+        reports_dir=reports_dir,
+        nome_arquivo="svm_otimizacao_trials.png",
+        titulo="SVM - Evolucao dos Trials de Otimizacao",
+        logger=logger,
+    )
+
+    metrics = {
+        "modelo": "svm",
+        "hiperparametros_usados": params_finais,
+        "otimizacao_hiperparametros": resumo_otimizacao,
+        "internal_validation": {"accuracy": acc, "f1_macro": f1},
+        "classification_report": classification_report(y_val, preds, output_dict=True, zero_division=0),
+    }
+    with open(reports_dir / "metricas_classificacao_treino.json", 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2)
+    return model_path
+
+
+def _treinar_mlp(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """
+    Treina MLP (scikit-learn) com arquitetura flexível.
+    Dimensão de entrada e classes são inferidas automaticamente de X e y.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes da classificacao.
+        models_dir (Path): Diretorio de saida de modelos.
+        reports_dir (Path): Diretorio de saida de relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do modelo salvo.
+    """
+    logger.info("Treinando MLP...")
+    cfg_mlp = config_cls.get("mlp", {})
+    n_features = int(X.shape[1])
+    n_classes = int(len(np.unique(y)))
+
+    hidden_layers_cfg = cfg_mlp.get("hidden_layer_sizes", [128, 64])
+    if isinstance(hidden_layers_cfg, list):
+        hidden_layers = tuple(int(v) for v in hidden_layers_cfg)
+    else:
+        hidden_layers = (128, 64)
+
+    params_base = {
+        "hidden_layer_sizes": hidden_layers,
+        "activation": str(cfg_mlp.get("activation", "relu")),
+        "alpha": float(cfg_mlp.get("alpha", 1e-4)),
+        "learning_rate_init": float(cfg_mlp.get("learning_rate_init", 1e-3)),
+        "batch_size": int(cfg_mlp.get("batch_size", 32)),
+        "max_iter": int(cfg_mlp.get("max_iter", 400)),
+        "early_stopping": bool(cfg_mlp.get("early_stopping", True)),
+        "validation_fraction": float(cfg_mlp.get("validation_fraction", 0.1)),
+        "n_iter_no_change": int(cfg_mlp.get("n_iter_no_change", 30)),
+        "random_state": int(cfg_mlp.get("random_state", 42)),
+    }
+    logger.info(f"MLP dinâmico - n_features: {n_features} | n_classes: {n_classes}")
+
+    X_train, X_val, y_train, y_val = _preparar_split_interno_com_grupos(
+        X=X,
+        y=y,
+        groups=groups,
+        origem_instancia=origem_instancia,
+        config_cls=config_cls,
+        logger=logger,
+    )
+
+    params_finais = dict(params_base)
+    cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
+    resumo_otimizacao: Optional[Dict[str, Any]] = None
+    if bool(cfg_otimizacao.get("habilitar", False)):
+        metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
+        n_trials = int(cfg_otimizacao.get("n_trials", 40))
+        seed = int(cfg_otimizacao.get("seed", 42))
+        timeout_segundos = cfg_otimizacao.get("timeout_segundos")
+        historico_trials: List[Dict[str, Any]] = []
+
+        def _avaliar_trial(params_trial: Dict[str, Any]) -> float:
+            params_local = dict(params_base)
+            params_local.update(params_trial)
+            clf_trial = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    ("mlp", MLPClassifier(**params_local)),
+                ]
+            )
+            clf_trial.fit(X_train, y_train)
+            preds_val = clf_trial.predict(X_val)
+            return float(f1_score(y_val, preds_val, average="macro", zero_division=0))
+
+        if metodo == "optuna":
+            try:
+                import optuna  # type: ignore
+                logger.info(f"Iniciando otimização de hiperparâmetros MLP com Optuna ({n_trials} trials)...")
+                sampler = optuna.samplers.TPESampler(seed=seed)
+                estudo = optuna.create_study(direction="maximize", sampler=sampler)
+
+                def objetivo(trial: Any) -> float:
+                    n_layers = trial.suggest_int("n_layers", 1, 3)
+                    layer_choices = [64, 128, 256]
+                    hidden = tuple(
+                        trial.suggest_categorical(f"hidden_{i}", layer_choices) for i in range(n_layers)
+                    )
+                    params_trial = {
+                        "hidden_layer_sizes": hidden,
+                        "alpha": trial.suggest_float("alpha", 1e-6, 1e-3, log=True),
+                        "learning_rate_init": trial.suggest_float("learning_rate_init", 1e-4, 3e-3, log=True),
+                        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 64]),
+                    }
+                    return _avaliar_trial(params_trial)
+
+                estudo.optimize(
+                    objetivo,
+                    n_trials=n_trials,
+                    timeout=(int(timeout_segundos) if timeout_segundos else None),
+                    show_progress_bar=False,
+                )
+                best = estudo.best_trial.params
+                n_layers_best = int(best.get("n_layers", 1))
+                hidden_best = tuple(int(best[f"hidden_{i}"]) for i in range(n_layers_best))
+                params_finais.update(
+                    {
+                        "hidden_layer_sizes": hidden_best,
+                        "alpha": float(best.get("alpha", params_base["alpha"])),
+                        "learning_rate_init": float(best.get("learning_rate_init", params_base["learning_rate_init"])),
+                        "batch_size": int(best.get("batch_size", params_base["batch_size"])),
+                    }
+                )
+                resumo_otimizacao = {
+                    "habilitado": True,
+                    "metodo_solicitado": metodo,
+                    "metodo_executado": "optuna",
+                    "n_trials_solicitados": n_trials,
+                    "n_trials_executados": len(estudo.trials),
+                    "melhor_f1_macro": float(estudo.best_value),
+                    "historico_trials": [
+                        {"trial": int(t.number) + 1, "value": (None if t.value is None else float(t.value))}
+                        for t in estudo.trials
+                    ],
+                }
+            except Exception as exc:
+                logger.warning(f"Falha ao usar Optuna para MLP ({exc}). Fallback para random search.")
+                metodo = "random"
+
+        if metodo != "optuna":
+            logger.info(f"Iniciando otimização MLP com random search ({n_trials} trials)...")
+            gerador = np.random.default_rng(seed)
+            melhor_score = -1.0
+            melhor_params: Dict[str, Any] = {}
+            layer_choices = [64, 128, 256]
+            for _ in range(n_trials):
+                n_layers = int(gerador.integers(1, 4))
+                hidden = tuple(layer_choices[int(gerador.integers(0, len(layer_choices)))] for _ in range(n_layers))
+                params_trial = {
+                    "hidden_layer_sizes": hidden,
+                    "alpha": float(np.exp(gerador.uniform(np.log(1e-6), np.log(1e-3)))),
+                    "learning_rate_init": float(np.exp(gerador.uniform(np.log(1e-4), np.log(3e-3)))),
+                    "batch_size": [16, 32, 64][int(gerador.integers(0, 3))],
+                }
+                score = _avaliar_trial(params_trial)
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_params = params_trial
+                historico_trials.append({"trial": len(historico_trials) + 1, "value": float(score)})
+            params_finais.update(melhor_params)
+            resumo_otimizacao = {
+                "habilitado": True,
+                "metodo_solicitado": str(cfg_otimizacao.get("metodo", "random")),
+                "metodo_executado": "random_search",
+                "n_trials_solicitados": n_trials,
+                "n_trials_executados": n_trials,
+                "melhor_f1_macro": float(melhor_score),
+                "historico_trials": historico_trials,
+            }
+
+    clf = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("mlp", MLPClassifier(**params_finais)),
+        ]
+    )
+    clf.fit(X_train, y_train)
+    preds = clf.predict(X_val)
+    acc = accuracy_score(y_val, preds)
+    f1 = f1_score(y_val, preds, average="macro", zero_division=0)
+    hidden_eff = tuple(int(v) for v in params_finais.get("hidden_layer_sizes", hidden_layers))
+    arquitetura = [n_features] + list(hidden_eff) + [n_classes]
+    total_parametros = 0
+    for i in range(len(arquitetura) - 1):
+        n_in = int(arquitetura[i])
+        n_out = int(arquitetura[i + 1])
+        total_parametros += (n_in + 1) * n_out  # pesos + bias
+    logger.info(
+        "MLP Summary -> arquitetura=%s | ativacao=%s | alpha=%.6f | lr=%.6f | batch_size=%s | max_iter=%s | params=%d",
+        arquitetura,
+        str(params_finais.get("activation", params_base["activation"])),
+        float(params_finais.get("alpha", params_base["alpha"])),
+        float(params_finais.get("learning_rate_init", params_base["learning_rate_init"])),
+        str(params_finais.get("batch_size", params_base["batch_size"])),
+        str(params_finais.get("max_iter", params_base["max_iter"])),
+        int(total_parametros),
+    )
+    logger.info(f"MLP Validação Interna - Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+
+    _salvar_graficos_treino_mlp(
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        params_finais=params_finais,
+        reports_dir=reports_dir,
+        logger=logger,
+    )
+
+    model_path = models_dir / "mlp_model.joblib"
+    joblib.dump(clf, model_path)
+    joblib.dump(list(X.columns), models_dir / "feature_names.pkl")
+    logger.info(f"Modelo salvo em {model_path}")
+
+    _salvar_grafico_otimizacao_generico(
+        resumo_otimizacao=resumo_otimizacao,
+        reports_dir=reports_dir,
+        nome_arquivo="mlp_otimizacao_trials.png",
+        titulo="MLP - Evolucao dos Trials de Otimizacao",
+        logger=logger,
+    )
+
+    metrics = {
+        "modelo": "mlp",
+        "hiperparametros_usados": params_finais,
+        "otimizacao_hiperparametros": resumo_otimizacao,
+        "internal_validation": {"accuracy": acc, "f1_macro": f1},
+        "rede_dinamica": {
+            "n_features_entrada": n_features,
+            "n_classes": n_classes,
+            "hidden_layer_sizes": list(params_finais.get("hidden_layer_sizes", hidden_layers)),
+        },
+        "classification_report": classification_report(y_val, preds, output_dict=True, zero_division=0),
+    }
+    with open(reports_dir / "metricas_classificacao_treino.json", 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2)
+    return model_path
+
+
+def _salvar_graficos_treino_mlp(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    params_finais: Dict[str, Any],
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> None:
+    """
+    Salva curvas de loss e acuracia (treino e validacao) para o MLP final.
+
+    Parametros:
+        X_train (pd.DataFrame): Features de treino.
+        y_train (np.ndarray): Rotulos de treino.
+        X_val (pd.DataFrame): Features de validacao interna.
+        y_val (np.ndarray): Rotulos de validacao interna.
+        params_finais (Dict[str, Any]): Hiperparametros finais do MLP.
+        reports_dir (Path): Diretorio de saida dos graficos.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        None: Salva os arquivos de grafico em disco.
+    """
+    try:
+        scaler = StandardScaler()
+        X_train_s = scaler.fit_transform(X_train)
+        X_val_s = scaler.transform(X_val)
+
+        params_curva = dict(params_finais)
+        max_iter = int(params_curva.get("max_iter", 200))
+        params_curva["max_iter"] = 1
+        params_curva["warm_start"] = True
+        params_curva["early_stopping"] = False
+
+        clf_curva = MLPClassifier(**params_curva)
+        classes_all = np.unique(y_train)
+
+        loss_treino: List[float] = []
+        loss_validacao: List[float] = []
+        acc_treino: List[float] = []
+        acc_validacao: List[float] = []
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            for _ in range(max_iter):
+                clf_curva.fit(X_train_s, y_train)
+
+                loss_treino.append(float(getattr(clf_curva, "loss_", np.nan)))
+
+                pred_train = clf_curva.predict(X_train_s)
+                pred_val = clf_curva.predict(X_val_s)
+                acc_treino.append(float(accuracy_score(y_train, pred_train)))
+                acc_validacao.append(float(accuracy_score(y_val, pred_val)))
+
+                try:
+                    proba_val = clf_curva.predict_proba(X_val_s)
+                    loss_val = float(log_loss(y_val, proba_val, labels=classes_all))
+                except Exception:
+                    loss_val = float("nan")
+                loss_validacao.append(loss_val)
+
+        epocas = np.arange(1, max_iter + 1)
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(epocas, loss_treino, label="Loss treino")
+        plt.plot(epocas, loss_validacao, label="Loss validacao")
+        plt.xlabel("Epoca")
+        plt.ylabel("Loss")
+        plt.title("MLP - Evolucao da Loss (Treino vs Validacao)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(reports_dir / "mlp_curva_loss_treino_validacao.png")
+        plt.close()
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(epocas, acc_treino, label="Acuracia treino")
+        plt.plot(epocas, acc_validacao, label="Acuracia validacao")
+        plt.xlabel("Epoca")
+        plt.ylabel("Acuracia")
+        plt.title("MLP - Evolucao da Acuracia (Treino vs Validacao)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(reports_dir / "mlp_curva_acuracia_treino_validacao.png")
+        plt.close()
+
+        logger.info(
+            "Graficos do MLP final salvos em %s: mlp_curva_loss_treino_validacao.png e mlp_curva_acuracia_treino_validacao.png",
+            str(reports_dir),
+        )
+    except Exception as exc:
+        logger.warning(f"Nao foi possivel salvar graficos de treino do MLP: {exc}")

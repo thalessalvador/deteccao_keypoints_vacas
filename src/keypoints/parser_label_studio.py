@@ -110,19 +110,17 @@ def _processar_item_label_studio(
     arquivos_por_nome: Optional[Dict[str, List[Path]]] = None
 ) -> Optional[ImagemAnotada]:
     """
-    _processar_item_label_studio: Processa um item individual de anotação do Label Studio.
+    Processa um item de anotacao do Label Studio para o contrato interno.
 
-    Adaptação para processar o formato específico onde 'result' está na raiz e 'task' contém metadados,
-    ou o formato lista de tasks.
+    Parametros:
+        item (Dict[str, Any]): Registro bruto da anotacao.
+        arquivo_json (Path): Arquivo JSON de origem da anotacao.
+        root_dir (Path): Diretorio raiz para resolver caminhos de imagem.
+        logger (logging.Logger): Logger para avisos e erros.
+        arquivos_por_nome (Optional[Dict[str, List[Path]]]): Indice opcional de imagens por nome.
 
-    Args:
-        item (Dict[str, Any]): Dicionário contendo os dados da anotação.
-        arquivo_json (Path): Caminho do arquivo JSON de origem.
-        root_dir (Path): Diretório raiz do dataset.
-        logger (logging.Logger): Logger.
-
-    Returns:
-        Optional[ImagemAnotada]: Objeto processado ou None se inválido/vazio.
+    Retorno:
+        Optional[ImagemAnotada]: Estrutura normalizada ou None quando o item e invalido.
     """
     # Identificar onde estão os resultados e o caminho da imagem
     results = []

@@ -1,4 +1,4 @@
-﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF)
+﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF/SVM/MLP)
 
 ## Visão geral
 ![Desafio do projeto de identificação de vacas](Cows_challenge.png)
@@ -12,7 +12,7 @@ Este repositório implementa um pipeline em 3 fases:
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
-3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF)**  
+3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP)**  
    Treina um classificador tabular configurável via `classificacao.modelo_padrao` e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
@@ -109,12 +109,27 @@ dados/raw/dataset_keypoints/
 - Cenário real: filmagem **de cima** (não há uma vaca passando por cima de outra).  
   Pode haver **overlap leve de bordas** dos bboxes; por isso, a associação keypoint↔bbox usa tolerância (2–5 px).
 
+#### O que é obrigatório vs opcional na estrutura
+- **Obrigatório:**
+  - arquivos de anotação válidos do Label Studio (JSON, com ou sem extensão `.json`);
+  - imagens correspondentes às anotações, com nome de arquivo compatível.
+- **Opcional (recomendado):**
+  - organização por anotador com pasta `Key_points` (ex.: `<anotador>/Key_points/...`).
+
+O parser atual procura anotações primeiro em `**/Key_points/*`.  
+Se não encontrar, faz fallback para `**/*.json` em todo `dados/raw/dataset_keypoints`.
+
+Na prática, você pode deixar **imagens + anotações tudo junto** em `dados/raw/dataset_keypoints`, desde que:
+- os nomes das imagens sejam únicos (evitar arquivos homônimos em pastas diferentes);
+- cada anotação referencie corretamente o nome da imagem.
+
 ### dataset_classificacao
 ```text
 dados/raw/dataset_classificacao/
   <cow_number>/
     *.jpg
 ```
+- Cada subpasta em `dataset_classificacao` representa **uma vaca** (ID/classe), e as imagens dentro dela são fotos dessa mesma vaca.
 - ~50 imagens por vaca.
 - Split 90/10 por vaca.
 
@@ -139,7 +154,7 @@ Principais parâmetros:
 - `pose.imgsz`, `pose.batch`, `pose.epochs`, `pose.device`
 - `pose.k_folds`, `pose.estrategia_validacao`
 - `pose.usar_data_augmentation` e `pose.augmentacao`
-- `classificacao.modelo_padrao` (`xgboost`, `catboost` ou `sklearn_rf`)
+- `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm` ou `mlp`)
 - `classificacao.features.selecionadas`
 - `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
 - `classificacao.filtro_confianca_pose` (gate de qualidade da pose antes de gerar/classificar features)
@@ -256,7 +271,7 @@ Se nenhuma instância passar `conf_min`, a imagem é **descartada do treino** e 
 
 ---
 
-## Treino do classificador (XGBoost/CatBoost/RF) — early stopping
+## Treino do classificador (XGBoost/CatBoost/RF/SVM/MLP) — early stopping
 O treino tabular cria uma **validação interna** (ex.: 80/20 dentro do treino 90%) e utiliza:
 - `early_stopping_rounds`
 
@@ -304,6 +319,24 @@ python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar
 ```
 *A saída será salva em `saidas/inferencias/imagens_plotadas`.*
 
+Para inspecionar o augmentation gaussiano de keypoints na mesma imagem:
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao
+```
+
+Para controlar quantas cópias ruidosas desenhar no preview:
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao --aug-copias 30
+```
+
+Esse modo salva um arquivo `<nome>_aug_preview.<ext>` em `saidas/inferencias/imagens_plotadas`,
+com keypoints originais e as variações geradas por ruído gaussiano.
+
+Exemplo completo (esqueleto + preview de augmentação na mesma execução):
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar --desenhar-augmentacao --aug-copias 30
+```
+
 #### 4. Gerar Features (Fase 2)
 Processa todas as imagens de `dataset_classificacao`, extrai keypoints e calcula as features geométricas (CSV):
 ```bash
@@ -311,7 +344,7 @@ python -m src.cli gerar-features
 ```
 
 #### 5. Treinar Classificador (Fase 3)
-Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json` ou `catboost_model.cbm` ou `rf_model.joblib`, além do encoder):
+Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib` ou `mlp_model.joblib`, além do encoder):
 ```bash
 python -m src.cli treinar-classificador
 ```
@@ -326,7 +359,7 @@ python -m src.cli avaliar-classificador
 Executa o fluxo completo para uma nova imagem:
 1. Detecta pose (YOLO).
 2. Extrai features.
-3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost` ou `sklearn_rf`).
+3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm` ou `mlp`).
 ```bash
 python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
 ```
@@ -361,10 +394,14 @@ python -m src.cli pipeline-completo
  - `saidas/relatorios/rf_otimizacao_trials.png`
  - `saidas/relatorios/catboost_importancia_topn.png`
  - `saidas/relatorios/catboost_otimizacao_trials.png`
+ - `saidas/relatorios/svm_otimizacao_trials.png`
+ - `saidas/relatorios/mlp_otimizacao_trials.png`
 
 ---
 
 ## Reprodutibilidade
 - Seeds configuráveis em `config.yaml`.
 - Logs em `saidas/logs/app.log`.
+
+
 

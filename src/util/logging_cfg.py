@@ -35,11 +35,16 @@ def configurar_logger(nome: str = "projeto_vacas", nivel: int = logging.INFO, ar
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Handler de Arquivo
+    # Handler de Arquivo (com fallback para diretório local gravável)
     caminho_log = Path(arquivo_log)
-    caminho_log.parent.mkdir(parents=True, exist_ok=True)
-    
-    file_handler = logging.FileHandler(caminho_log, encoding='utf-8')
+    try:
+        caminho_log.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(caminho_log, encoding='utf-8')
+    except PermissionError:
+        caminho_fallback = Path("_logs") / caminho_log.name
+        caminho_fallback.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(caminho_fallback, encoding='utf-8')
+
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

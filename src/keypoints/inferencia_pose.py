@@ -1,12 +1,14 @@
 import logging
 import torch
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from ultralytics import YOLO
 
 from ..util.contratos import RespostaInferenciaPose, InstanciaVacaAnotada, Bbox, KeypointPadronizado, NomeKeypoint
-from ..util.visualizacao import plotar_keypoints_na_imagem
+from ..util.visualizacao import plotar_keypoints_na_imagem, plotar_preview_augmentacao_keypoints
 from ..util.geometria import calcular_area_bbox
+from ..classificacao.gerador_dataset_features import _selecionar_instancia_alvo, _ler_cfg_augmentacao_keypoints, _gerar_keypoints_com_ruido
 
 LISTA_KEYPOINTS_ORDENADA_YOLO: List[NomeKeypoint] = [
     "withers", "back", "hook_up", "hook_down", 
@@ -19,7 +21,9 @@ def inferir_keypoints_em_imagem(
     config: Dict[str, Any], 
     desenhar: bool, 
     dir_saida_plot: Optional[Path],
-    logger: logging.Logger
+    logger: logging.Logger,
+    desenhar_augmentacao: bool = False,
+    aug_copias: Optional[int] = None,
 ) -> RespostaInferenciaPose:
     """
     inferir_keypoints_em_imagem: Realiza inferência de pose em uma imagem única.
@@ -31,6 +35,8 @@ def inferir_keypoints_em_imagem(
         desenhar (bool): Se deve gerar imagem com plot.
         dir_saida_plot (Optional[Path]): Diretório para salvar o plot (se desenhar=True).
         logger (logging.Logger): Logger.
+        desenhar_augmentacao (bool): Se deve gerar preview de keypoints augmentados por ruido.
+        aug_copias (Optional[int]): Numero de copias augmentadas no preview. Se None, usa config.
 
     Returns:
         RespostaInferenciaPose: Dicionário contendo as instâncias detectadas e metadados.
@@ -125,6 +131,44 @@ def inferir_keypoints_em_imagem(
             filename = caminho_imagem.name
             caminho_saida = dir_saida_plot / filename
             plotar_keypoints_na_imagem(caminho_imagem, instancias, caminho_saida, logger)
+
+        if desenhar_augmentacao and dir_saida_plot:
+            sel_cfg = config.get("classificacao", {}).get("selecao_instancia", {})
+            kpts_sel, bbox_sel = _selecionar_instancia_alvo(result, str(caminho_imagem), sel_cfg)
+            if kpts_sel is None:
+                logger.warning("Preview de augmentacao nao gerado: nenhuma instancia alvo encontrada.")
+            else:
+                cfg_aug = _ler_cfg_augmentacao_keypoints(config)
+                n_copias = int(aug_copias if aug_copias is not None else cfg_aug.get("n_copias", 0))
+                if n_copias <= 0:
+                    logger.warning("Preview de augmentacao nao gerado: n_copias <= 0.")
+                else:
+                    img_h, img_w = result.orig_shape
+                    kpts_augmentados: List[np.ndarray] = []
+                    for _ in range(n_copias):
+                        kpts_aug, n_perturbados = _gerar_keypoints_com_ruido(
+                            kpts=kpts_sel,
+                            bbox_info=bbox_sel,
+                            img_w=int(img_w),
+                            img_h=int(img_h),
+                            cfg_aug=cfg_aug,
+                        )
+                        if kpts_aug is None or n_perturbados == 0:
+                            continue
+                        kpts_augmentados.append(kpts_aug)
+
+                    caminho_saida_aug = dir_saida_plot / f"{caminho_imagem.stem}_aug_preview{caminho_imagem.suffix}"
+                    salvo = plotar_preview_augmentacao_keypoints(
+                        caminho_imagem=caminho_imagem,
+                        kpts_original=kpts_sel,
+                        kpts_augmentados=kpts_augmentados,
+                        caminho_saida=caminho_saida_aug,
+                        logger=logger,
+                    )
+                    if salvo is not None:
+                        logger.info(f"Preview de augmentacao salvo em: {salvo}")
+                    else:
+                        logger.warning("Falha ao salvar preview de augmentacao.")
             
         return resposta
 

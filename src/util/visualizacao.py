@@ -94,3 +94,67 @@ def plotar_keypoints_na_imagem(
     except Exception as e:
         logger.error(f"Erro ao plotar imagem {caminho_imagem}: {e}")
         return None
+
+
+def plotar_preview_augmentacao_keypoints(
+    caminho_imagem: Path,
+    kpts_original: np.ndarray,
+    kpts_augmentados: List[np.ndarray],
+    caminho_saida: Path,
+    logger: logging.Logger,
+) -> Optional[Path]:
+    """
+    Desenha keypoints originais e amostras augmentadas (ruido gaussiano) na mesma imagem.
+
+    Args:
+        caminho_imagem (Path): Imagem de entrada.
+        kpts_original (np.ndarray): Keypoints originais no formato (N, 3) [x, y, conf].
+        kpts_augmentados (List[np.ndarray]): Lista de keypoints augmentados no formato (N, 3).
+        caminho_saida (Path): Caminho da imagem de saida.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Optional[Path]: Caminho salvo ou None em caso de erro.
+    """
+    if not caminho_imagem.exists():
+        logger.error(f"Imagem nao encontrada para preview de augmentacao: {caminho_imagem}")
+        return None
+
+    try:
+        img = cv2.imread(str(caminho_imagem))
+        if img is None:
+            logger.error(f"Falha ao abrir imagem com cv2: {caminho_imagem}")
+            return None
+
+        # Augmentados: pontos pequenos em ciano para visualizar nuvem de variacao.
+        for kpts_aug in kpts_augmentados:
+            for kp in kpts_aug:
+                if kp.shape[0] < 2:
+                    continue
+                px, py = int(kp[0]), int(kp[1])
+                cv2.circle(img, (px, py), 2, (255, 255, 0), -1)
+
+        # Originais: pontos maiores em vermelho para referencia.
+        for kp in kpts_original:
+            if kp.shape[0] < 2:
+                continue
+            px, py = int(kp[0]), int(kp[1])
+            cv2.circle(img, (px, py), 5, (0, 0, 255), -1)
+
+        cv2.putText(
+            img,
+            f"originais: {len(kpts_original)} | copias aug: {len(kpts_augmentados)}",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        caminho_saida.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(caminho_saida), img)
+        return caminho_saida
+    except Exception as e:
+        logger.error(f"Erro ao gerar preview de augmentacao para {caminho_imagem}: {e}")
+        return None

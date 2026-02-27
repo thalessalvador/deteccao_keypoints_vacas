@@ -36,6 +36,13 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
     """
     avaliar_classificador: Avalia o modelo no conjunto de teste (10%).
     Oscilação da matriz de confusão e métricas finais.
+
+    Parametros:
+        config (Dict[str, Any]): Configuracoes gerais do projeto.
+        logger (logging.Logger): Logger para mensagens de execucao.
+
+    Retorno:
+        None: Salva relatorios em disco e imprime metricas no log.
     """
     logger.info("=== Fase 3: Avaliação do Classificador (Teste Final) ===")
     
@@ -58,6 +65,10 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         model_path = models_dir / "catboost_model.cbm"
     elif model_type == "sklearn_rf":
         model_path = models_dir / "rf_model.joblib"
+    elif model_type == "svm":
+        model_path = models_dir / "svm_model.joblib"
+    elif model_type == "mlp":
+        model_path = models_dir / "mlp_model.joblib"
     else:
         model_path = models_dir / "xgboost_model.json"
     le_path = models_dir / "label_encoder.pkl"
@@ -117,7 +128,7 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         from catboost import CatBoostClassifier
         clf = CatBoostClassifier()
         clf.load_model(str(model_path))
-    elif model_type == "sklearn_rf":
+    elif model_type in ("sklearn_rf", "svm", "mlp"):
         clf = joblib.load(model_path)
     else:
         clf = xgb.XGBClassifier()
@@ -149,6 +160,14 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         f"RESULTADO FINAL (Teste): Acurácia: {acc:.4f}, Precision-Macro: {prec:.4f}, "
         f"Recall-Macro: {rec:.4f}, F1-Macro: {f1:.4f}"
     )
+
+    # Top-k independe da regra de rejeicao.
+    top1 = float(topk_metrics.get("top1_accuracy", topk_metrics.get("top1", acc)))
+    top3 = float(topk_metrics.get("top3_accuracy", topk_metrics.get("top3", 0.0)))
+    top5 = float(topk_metrics.get("top5_accuracy", topk_metrics.get("top5", 0.0)))
+    logger.info("top1: %.4f", top1)
+    logger.info("top3: %.4f", top3)
+    logger.info("top5: %.4f", top5)
 
     # Metricas com rejeicao opcional (NAO_IDENTIFICADO)
     cfg_rejeicao = _ler_cfg_rejeicao_predicao(config)
@@ -190,6 +209,16 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
             acc_aceitas,
             f1_aceitas,
         )
+
+    if cfg_rejeicao["habilitar"] and resumo_rejeicao is not None:
+        logger.info("Com rejeicao (confianca_min=%.2f)", cfg_rejeicao["confianca_min"])
+        logger.info(
+            "cobertura (percentual de imagens aceitas pelos limiares de confianca top1 e margem top1-top2): %.4f",
+            float(resumo_rejeicao.get("cobertura", 0.0)),
+        )
+        metricas_aceitas = resumo_rejeicao.get("metricas_aceitas", {})
+        logger.info("accuracy nas aceitas: %.4f", float(metricas_aceitas.get("accuracy", 0.0)))
+        logger.info("f1_macro nas aceitas: %.4f", float(metricas_aceitas.get("f1_macro", 0.0)))
     
     # Matriz de Confusão
     cm = confusion_matrix(y_test, preds)
@@ -291,7 +320,15 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         """Encoder JSON para serializar tipos NumPy em tipos nativos Python."""
 
         def default(self, obj: Any) -> Any:
-            """Converte objetos NumPy para representacoes serializaveis em JSON."""
+            """
+            Converte objetos NumPy para representacoes serializaveis em JSON.
+
+            Parametros:
+                obj (Any): Objeto a ser serializado.
+
+            Retorno:
+                Any: Valor convertido para tipo serializavel em JSON.
+            """
             if isinstance(obj, (np.integer, np.int64)):
                 return int(obj)
             if isinstance(obj, (np.floating, np.float64)):

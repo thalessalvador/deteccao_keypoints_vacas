@@ -97,7 +97,18 @@ def _gerar_keypoints_com_ruido(
 ) -> Tuple[Optional[np.ndarray], int]:
     """
     Gera uma copia augmentada de keypoints aplicando ruido gaussiano em XY.
-    O ruido e aplicado apenas em keypoints com confianca >= conf_min_keypoint.
+    
+    O ruido e aplicado apenas em keypoints com confianca acima do limiar.
+    
+    Args:
+        kpts (np.ndarray): Matriz de keypoints no formato (N, 3) [x, y, conf].
+        bbox_info (Optional[Dict[str, float]]): Informacoes do bbox da instancia.
+        img_w (int): Largura da imagem.
+        img_h (int): Altura da imagem.
+        cfg_aug (Dict[str, Any]): Configuracoes efetivas de augmentacao.
+    
+    Returns:
+        Tuple[Optional[np.ndarray], int]: Keypoints augmentados e quantidade de pontos perturbados.
     """
     noise_std_xy = cfg_aug["noise_std_xy"]
     if noise_std_xy <= 0:
@@ -203,7 +214,8 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
         return Path("")
     
     splits_dir = Path(config["paths"]["processed"]) / "classificacao" / "splits"
-    all_train, all_test = _criar_splits_por_vaca(raw_dir, 0.1, 42, splits_dir, logger)
+    split_teste = float(cls_cfg.get("split_teste", 0.1))
+    all_train, all_test = _criar_splits_por_vaca(raw_dir, split_teste, 42, splits_dir, logger)
     train_names = {p.name for p in all_train}
     test_names = {p.name for p in all_test}
 
@@ -305,6 +317,13 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
 
     # Salvar CSVs
     df = pd.DataFrame(dados_features)
+    if df.empty:
+        logger.error(
+            "Nenhuma feature foi gerada. Verifique 'imagens_descartadas.csv' para os motivos "
+            "antes de prosseguir para treino/classificacao."
+        )
+        raise ValueError("features_completas.csv vazio: nenhuma feature gerada.")
+
     out_csv = processed_dir / "features_completas.csv"
     df.to_csv(out_csv, index=False)
     
@@ -350,8 +369,19 @@ def gerar_dataset_features(config: Dict[str, Any], logger: logging.Logger) -> Pa
 
 def _criar_splits_por_vaca(dir_dataset: Path, split_teste: float, seed: int, dir_saida: Path, logger: logging.Logger) -> Tuple[List[Path], List[Path]]:
     """
-    Cria arquivos de split treino/teste (90/10) estratificado por vaca.
-    Salva em dir_saida/treino.txt e dir_saida/teste_10pct.txt.
+    Cria os arquivos de split treino/teste estratificados por vaca.
+    
+    Salva os arquivos canonicos de treino e teste e tambem versoes com pasta para inspecao.
+    
+    Args:
+        dir_dataset (Path): Diretorio raiz do dataset de classificacao.
+        split_teste (float): Fracao de amostras reservadas para teste por classe.
+        seed (int): Semente para embaralhamento reprodutivel.
+        dir_saida (Path): Diretorio de saida dos arquivos de split.
+        logger (logging.Logger): Logger para registrar contagens e avisos.
+    
+    Returns:
+        Tuple[List[Path], List[Path]]: Listas de caminhos de treino e teste geradas.
     """
     import random
     random.seed(seed)
@@ -366,7 +396,7 @@ def _criar_splits_por_vaca(dir_dataset: Path, split_teste: float, seed: int, dir
         imgs = sorted(list(d.glob("*.jpg")) + list(d.glob("*.png")))
         random.shuffle(imgs)
         
-        n_test = max(1, int(len(imgs) * split_teste)) # Pelo menos 1 de teste se possivel? Ou 10% strict?
+        n_test = max(1, int(len(imgs) * split_teste)) # Pelo menos 1 de teste se possivel Ou 10% strict
         # Spec diz 10%. Se tiver 50 imgs -> 5 teste.
         
         if len(imgs) < 2:
@@ -416,15 +446,18 @@ def _criar_splits_por_vaca(dir_dataset: Path, split_teste: float, seed: int, dir
 
 def _selecionar_instancia_alvo(result: Any, img_path: str, config_sel: Dict[str, float]) -> Tuple[Optional[np.ndarray], Optional[Dict[str, float]]]:
     """
-    Seleciona a melhor instância (vaca) na imagem baseado em heurísticas.
+    Seleciona a melhor instancia da imagem com base em heuristicas de score.
     
-    Critérios:
-    - Confiança do bbox
-    - Área do bbox
-    - Proximidade do centro
+    Combina confianca, area e proximidade do centro para escolher a vaca alvo.
+    
+    Args:
+        result (Any): Resultado bruto da inferencia YOLO para uma imagem.
+        img_path (str): Caminho da imagem (usado para log/diagnostico).
+        config_sel (Dict[str, float]): Pesos e limiares da regra de selecao.
     
     Returns:
-        tuple: (Keypoints da instância vencedora, Dict com info do bbox) ou (None, None).
+        Tuple[Optional[np.ndarray], Optional[Dict[str, float]]]: Keypoints da instancia escolhida
+        e metadados do bbox, ou (None, None) quando nenhuma instancia for valida.
     """
     if not result.boxes:
         return None, None
@@ -485,29 +518,15 @@ def _selecionar_instancia_alvo(result: Any, img_path: str, config_sel: Dict[str,
 
 def _normalizar_orientacao_keypoints(kpts: np.ndarray) -> np.ndarray:
     """
-    Se a vaca estiver invertida (cabeça para baixo/esquerda?), espelha keypoints.
-    Heurística simples: Posição do withers vs tail_head?
-    Spec 4.3: "Calcular orientação por heurística (ex.: x(tail_head) - x(back))".
-    Se ativado, normaliza para 0..1 dentro do bbox e inverte X se necessário.
+    Normaliza orientacao dos keypoints quando a opcao esta habilitada.
     
-    NOTA: Feature generation abaixo usa distâncias, que são invariantes a translação. 
-    Mas angulos podem mudar se espelhar.
+    No estado atual, a implementacao retorna os keypoints sem alteracao.
     
-    Por simplicidade e seguindo a spec, vamos implementar uma versão básica se flag True.
-    A spec diz: "Normalização de orientação (no espaço do bbox)... 2. Se invertida, x' = 1 - x"
+    Args:
+        kpts (np.ndarray): Keypoints no formato (N, 3).
     
-    Isso requer ter o bbox da instância. Como aqui só recebo kpts, precisaria passar bbox também.
-    IMPORTANTE: Calcular features geométricas usando coordenadas absolutas de pixels (distancia euclidiana) funciona igual.
-    Apenas ANGULOS com sinal (se tiver) mudariam. `calcular_angulo` retorna 0..180 (sem sinal), então invariança a rotação/espelhamento
-    depende de como definimos. 
-    
-    Se `calcular_angulo` usa lei dos cossenos (sem sinal), é invariante a espelhamento? Sim (cos(-x) = cos(x)).
-    
-    Entretanto, para features RELATIVAS (ex: delta X), orientação importa.
-    No momento, vamos focar nas features de Distância e Angulo (sem sinal) que são robustas.
-    Retornamos os kpts originais se a normalização for complexa demais para agora.
-    
-    TODO: refinar se necessário.
+    Returns:
+        np.ndarray: Keypoints normalizados (ou originais, conforme implementacao atual).
     """
     return kpts
 
@@ -520,10 +539,16 @@ IDX_KP = {nome: i for i, nome in enumerate(LISTA_KEYPOINTS_ORDENADA)}
 
 def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[str, float]] = None) -> Dict[str, float]:
     """
-    Calcula distâncias, razões, ângulos e features complexas conforme especificação.
+    Calcula o vetor de features geometricas da instancia selecionada.
     
-    kpts: (8, 3) -> [x, y, conf]
-    bbox_info: Dict com info do bbox (opcional)
+    Gera distancias, razoes, angulos, areas, indices e descritores derivados dos keypoints.
+    
+    Args:
+        kpts (np.ndarray): Keypoints no formato (8, 3) [x, y, conf].
+        bbox_info (Optional[Dict[str, float]]): Informacoes do bbox para normalizacoes e features adicionais.
+    
+    Returns:
+        Dict[str, float]: Dicionario com as features geometricas calculadas.
     """
     feat = {}
     
@@ -537,12 +562,26 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     
     # Helper para pegar (x, y) de um nome
     def obter_ponto(nome: str) -> Tuple[float, float]:
-        """Retorna coordenadas (x, y) de um keypoint pelo nome."""
+        """Retorna as coordenadas (x, y) de um keypoint pelo nome.
+
+        Parametros:
+            nome (str): Nome do keypoint no mapeamento IDX_KP.
+
+        Retorno:
+            Tuple[float, float]: Coordenadas x e y do keypoint.
+        """
         idx = IDX_KP[nome]
         return (float(kpts[idx][0]), float(kpts[idx][1]))
         
     def obter_confianca(nome: str) -> float:
-        """Retorna confianca do keypoint pelo nome."""
+        """Retorna a confianca do keypoint pelo nome.
+
+        Parametros:
+            nome (str): Nome do keypoint no mapeamento IDX_KP.
+
+        Retorno:
+            float: Confianca associada ao keypoint.
+        """
         idx = IDX_KP[nome]
         return float(kpts[idx][2])
     
@@ -564,7 +603,17 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
 
     # --- Razões Obrigatórias (Spec 10.4) ---
     def calcular_razao(num_p1: str, num_p2: str, den_p1: str, den_p2: str) -> float:
-        """Calcula razao entre duas distancias euclidianas."""
+        """Calcula a razao entre duas distancias euclidianas.
+
+        Parametros:
+            num_p1 (str): Primeiro keypoint do numerador.
+            num_p2 (str): Segundo keypoint do numerador.
+            den_p1 (str): Primeiro keypoint do denominador.
+            den_p2 (str): Segundo keypoint do denominador.
+
+        Retorno:
+            float: Razao entre as distancias, ou 0.0 quando o denominador e zero.
+        """
         num = calcular_distancia(obter_ponto(num_p1), obter_ponto(num_p2))
         den = calcular_distancia(obter_ponto(den_p1), obter_ponto(den_p2))
         if den == 0: return 0.0
@@ -597,7 +646,16 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     
     # --- Ângulos Obrigatórios (Spec 10.4) ---
     def calcular_angulo_tripla(p1: str, v: str, p3: str) -> float:
-        """Calcula angulo em graus com vertice no ponto central informado."""
+        """Calcula o angulo (graus) com vertice no ponto central informado.
+
+        Parametros:
+            p1 (str): Nome do primeiro ponto da tripla.
+            v (str): Nome do ponto vertice.
+            p3 (str): Nome do terceiro ponto da tripla.
+
+        Retorno:
+            float: Angulo em graus no intervalo retornado por `calcular_angulo`.
+        """
         return calcular_angulo(obter_ponto(p1), obter_ponto(v), obter_ponto(p3))
         
     feat["angulo_hook_up_hip_hook_down"] = calcular_angulo_tripla("hook_up", "hip", "hook_down")
@@ -702,7 +760,7 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
             feat[f"sc_{nome}_x"] = new_x / len_base
             feat[f"sc_{nome}_y"] = new_y / len_base
     else:
-        # Fallback (vaca pontual??)
+        # Fallback (vaca pontual)
         for nome in LISTA_KEYPOINTS_ORDENADA:
             feat[f"sc_{nome}_x"] = 0.0
             feat[f"sc_{nome}_y"] = 0.0

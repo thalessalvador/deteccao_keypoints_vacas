@@ -1,14 +1,14 @@
 pose:
-  model_name: "yolo26n-pose.pt" # Pretrained model to start from
-  imgsz: 640
-  batch: 16
-  workers: 8 # DataLoader (CPU/I/O). Teste 8, 12 e 16.
-  cache: false # false | ram | disk. "ram" acelera leitura se houver memoria.
-  amp: true # mixed precision na GPU (mais rapido e menor uso de VRAM)
-  epochs: 200
-  patience: 50 # Early stopping epochs
-  device: "0" # "cpu" or "0", "1", etc.
-  k_folds: 5
+  model_name: "yolo26n-pose.pt" # Modelo base pretreinado para inicializar o treino de pose
+  imgsz: 640 # Tamanho da imagem de entrada do YOLO (quadrada)
+  batch: 16 # Tamanho do lote por iteracao
+  workers: 8 # Numero de processos de carregamento de dados (CPU/I/O). Teste 8, 12 e 16.
+  cache: false # Cache do dataset: false | ram | disk. "ram" acelera leitura se houver memoria.
+  amp: true # Precision mista na GPU (mais rapido e menor uso de VRAM)
+  epochs: 200 # Numero maximo de epocas
+  patience: 50 # Paciencia do early stopping (epocas sem melhora)
+  device: "0" # Dispositivo de execucao: "cpu", "0", "1", etc.
+  k_folds: 5 # Numero de folds para validacao cruzada na fase de pose
   # Estrategias de validacao para treino de pose:
   # - "kfold_misturado":
   #   KFold comum com shuffle. Mistura imagens livremente entre folds.
@@ -26,29 +26,30 @@ pose:
   #   Pode reduzir metricas de validacao, mas deixa o teste mais robusto.
   #
   # Observacoes:
-  # - Se houver poucos grupos para o numero de folds (k_folds), o pipeline faz fallback para kfold_misturado.
+  # - Se houver poucos grupos para o numero de folds (k_folds), o pipeline usa kfold_misturado como contingencia.
   # - O valor e lido como texto; qualquer valor iniciando com "groupkfold" ativa logica de GroupKFold.
   estrategia_validacao: "groupkfold_por_sessao"
-  forcar_diversidade_batch: true
-  usar_data_augmentation: true
+  forcar_diversidade_batch: true # Tenta aumentar diversidade de amostras por lote durante treino
+  usar_data_augmentation: true # Liga/desliga augmentacao de imagem no treino de pose
   augmentacao:
-    hsv_h: 0.015
-    hsv_s: 0.7
-    hsv_v: 0.4
-    degrees: 5.0
-    translate: 0.10
-    scale: 0.50
-    shear: 2.0
-    perspective: 0.0005
-    fliplr: 0.0
-    flipud: 0.0
-    mosaic: 0.7
-    mixup: 0.1
-    erasing: 0.2
+    hsv_h: 0.015 # Variacao de matiz
+    hsv_s: 0.7 # Variacao de saturacao
+    hsv_v: 0.4 # Variacao de brilho/valor
+    degrees: 5.0 # Rotacao maxima (graus)
+    translate: 0.10 # Translacao maxima relativa
+    scale: 0.50 # Escala maxima relativa
+    shear: 2.0 # Cisalhamento maximo (graus)
+    perspective: 0.0005 # Distorcao de perspectiva
+    fliplr: 0.0 # Probabilidade de flip horizontal
+    flipud: 0.0 # Probabilidade de flip vertical
+    mosaic: 0.7 # Probabilidade de mosaic
+    mixup: 0.1 # Probabilidade de mixup
+    erasing: 0.2 # Probabilidade de apagamento aleatorio (random erasing)
 
 classificacao:
-  # Modelos suportados: "xgboost", "catboost", "sklearn_rf"
-  modelo_padrao: "sklearn_rf"
+  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp"
+  modelo_padrao: "mlp"
+  split_teste: 0.10 # Percentual de teste externo (caso real) por vaca
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
     habilitar: true # Ativa augmentation em keypoints (alem da flag global acima)
@@ -60,10 +61,10 @@ classificacao:
     seed: 42 # Semente do gerador aleatorio quando deterministico=true
   normalizar_orientacao: false   # deve ser true se fliplr > 0
   selecao_instancia:
-    conf_min: 0.4
-    peso_area: 0.5
-    peso_confianca: 0.5
-    bonus_centro: 0.2
+    conf_min: 0.4 # Confianca minima do bbox para considerar a instancia
+    peso_area: 0.5 # Peso da area do bbox na pontuacao de selecao da instancia alvo
+    peso_confianca: 0.5 # Peso da confianca do bbox na pontuacao de selecao
+    bonus_centro: 0.2 # Penalizacao pela distancia ao centro da imagem na pontuacao
   filtro_confianca_pose:
     # Filtro de qualidade da pose antes de gerar/classificar features.
     # A confianca usada aqui e a MEDIA DAS CONFIANCAS DOS 8 KEYPOINTS da instancia selecionada.
@@ -86,61 +87,81 @@ classificacao:
     # OU
     # 2) (confianca_top1 - confianca_top2) < margem_top1_top2_min
     habilitar: true
-    confianca_min: 0.35
+    confianca_min: 0.30
     margem_top1_top2_min: 0.00
     rotulo_nao_identificado: "NAO_IDENTIFICADO"
   validacao_interna:
-    fracao: 0.2
-    early_stopping_rounds: 50
+    fracao: 0.2 # Fracao usada como validacao interna DENTRO do treino externo (ex.: 0.2 => 20% do bloco de treino)
+    early_stopping_rounds: 50 # Paciência para parar treino de modelos que suportam early stopping
     usar_apenas_real: true # Se true, validacao interna usa apenas origem_instancia=real
   # Hiperparametros base do XGBoost (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
   xgboost:
-    n_estimators: 1000
-    learning_rate: 0.05
-    max_depth: 6
-    min_child_weight: 1.0
-    subsample: 0.8
-    colsample_bytree: 0.8
-    gamma: 0.0
-    reg_alpha: 0.0
-    reg_lambda: 1.0
-    random_state: 42
-    tree_method: "hist"
+    n_estimators: 1000 # Numero maximo de arvores/iteracoes
+    learning_rate: 0.05 # Taxa de aprendizado (shrinkage)
+    max_depth: 6 # Profundidade maxima por arvore
+    min_child_weight: 1.0 # Minimo de peso/suporte por folha
+    subsample: 0.8 # Fracao de amostras por arvore
+    colsample_bytree: 0.8 # Fracao de features por arvore
+    gamma: 0.0 # Ganho minimo para realizar divisao
+    reg_alpha: 0.0 # Regularizacao L1
+    reg_lambda: 1.0 # Regularizacao L2
+    random_state: 42 # Semente para reprodutibilidade
+    tree_method: "hist" # Metodo de crescimento das arvores ("hist" e rapido/estavel)
     device: "cuda" # "cuda" ou "cpu"
-    n_jobs: -1
+    n_jobs: -1 # Numero de threads ( -1 usa todos os nucleos )
   # Hiperparametros base do CatBoost (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
   catboost:
-    iterations: 1000
-    learning_rate: 0.05
-    depth: 6
-    l2_leaf_reg: 3.0
-    random_strength: 1.0
-    bagging_temperature: 0.5
-    rsm: 0.8
-    eval_metric: "MultiClass"
-    random_seed: 42
+    iterations: 1000 # Numero maximo de iteracoes
+    learning_rate: 0.05 # Taxa de aprendizado
+    depth: 6 # Profundidade das arvores
+    l2_leaf_reg: 3.0 # Regularizacao L2 das folhas
+    random_strength: 1.0 # Nivel de aleatoriedade na escolha de splits
+    bagging_temperature: 0.5 # Intensidade do Bayesian bagging
+    rsm: 0.8 # Fracao de features por iteracao (Metodo de Subespaco Aleatorio)
+    eval_metric: "MultiClass" # Metrica interna de avaliacao
+    random_seed: 42 # Semente para reprodutibilidade
     device: "cuda" # "cuda" ou "cpu"
   # Hiperparametros base do RandomForest (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
   rf:
-    n_estimators: 400
-    max_depth: null
-    min_samples_split: 2
-    min_samples_leaf: 1
+    n_estimators: 400 # Numero de arvores da floresta
+    max_depth: null # Profundidade maxima (null = sem limite)
+    min_samples_split: 2 # Minimo de amostras para permitir divisao
+    min_samples_leaf: 1 # Minimo de amostras por folha
     max_features: "sqrt" # "sqrt", "log2" ou null
-    bootstrap: true
+    bootstrap: true # Usa amostragem com reposicao em cada arvore
     class_weight: null # null ou "balanced"
-    random_state: 42
-    n_jobs: -1
-  # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest (menos forca bruta que GridSearch).
+    random_state: 42 # Semente para reprodutibilidade
+    n_jobs: -1 # Numero de threads ( -1 usa todos os nucleos )
+  # Hiperparametros base do SVM (SVC)
+  svm:
+    C: 1.0 # Forca de regularizacao inversa (maior C => menos regularizacao)
+    kernel: "rbf" # "rbf", "linear", "poly"
+    gamma: "scale" # "scale", "auto" ou float
+    degree: 3 # Usado quando kernel="poly"
+    class_weight: null # null ou "balanced"
+    random_state: 42 # Semente para reprodutibilidade
+  # Hiperparametros base do MLP (sklearn.neural_network.MLPClassifier)
+  mlp:
+    hidden_layer_sizes: [128, 64] # Tamanho inicial das camadas ocultas (entrada/saida bem como numero de camadas e tamanho sao inferidos em tempo de execucao)
+    activation: "relu" # Funcao de ativacao nas camadas ocultas
+    alpha: 0.0001 # Regularizacao L2
+    learning_rate_init: 0.001 # Taxa de aprendizado inicial
+    batch_size: 32 # Tamanho do mini-lote
+    max_iter: 400 # Maximo de epocas/iteracoes
+    early_stopping: true # Para treino antes se nao houver melhora interna
+    validation_fraction: 0.1 # Fracao interna usada pelo proprio MLP para early stopping
+    n_iter_no_change: 30 # Paciência do early stopping interno do MLP
+    random_state: 42 # Semente para reprodutibilidade
+  # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest/SVM/MLP (menos forca bruta que busca em grade).
   # metodo:
   # - "optuna": TPE/Bayesiano (preferencial, requer optuna instalado)
-  # - "random": busca aleatoria simples (fallback)
+  # - "random": busca aleatoria simples (contingencia)
   otimizacao_hiperparametros:
-    habilitar: true
+    habilitar: true # Liga/desliga busca de hiperparametros
     metodo: "optuna"
-    n_trials: 40
-    timeout_segundos: null
-    seed: 42
+    n_trials: 40 # Numero de tentativas da busca
+    timeout_segundos: null # Limite maximo em segundos (null = sem limite)
+    seed: 42 # Semente da busca
   features:
     # Ordem de importancia (gain) do ultimo treino com todas as features.
     # Descomentados ativos; restante comentado para liberar um a um.

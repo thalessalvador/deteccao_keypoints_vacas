@@ -33,13 +33,24 @@ def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
 
 def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int = 3, desenhar: bool = False, logger: logging.Logger = None) -> Dict[str, Any]:
     """
-    Realiza a classificação de uma única imagem end-to-end:
-    1. Detecta pose (YOLO)
-    2. Extrai features geométricas
-    3. Classifica (XGBoost)
+    classificar_imagem_unica: Classifica uma imagem unica no fluxo ponta-a-ponta.
+    
+    Passos principais:
+    1. Detecta pose com YOLO;
+    2. Seleciona a instancia alvo e valida a confianca dos keypoints;
+    3. Extrai features geometricas;
+    4. Classifica com o modelo tabular configurado e monta top-k.
+    
+    Args:
+        config (Dict[str, Any]): Configuracao global com modelos, filtros e caminhos.
+        img_path (Path): Caminho da imagem de entrada.
+        top_k (int, optional): Quantidade de classes retornadas no ranking top-k.
+        desenhar (bool, optional): Se True, salva imagem com o resultado sobreposto.
+        logger (logging.Logger, optional): Logger para mensagens de progresso e erro.
     
     Returns:
-        Dict com 'classe_predita', 'confianca', 'top_k', 'features', 'keypoints'
+        Dict[str, Any]: Dicionario com classe prevista, confiancas, top-k, status de rejeicao,
+        features extraidas e metadados de saida.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -79,6 +90,10 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         model_path_cls = cls_model_dir / "catboost_model.cbm"
     elif model_type == "sklearn_rf":
         model_path_cls = cls_model_dir / "rf_model.joblib"
+    elif model_type == "svm":
+        model_path_cls = cls_model_dir / "svm_model.joblib"
+    elif model_type == "mlp":
+        model_path_cls = cls_model_dir / "mlp_model.joblib"
     else:
         model_path_cls = cls_model_dir / "xgboost_model.json"
     le_path = cls_model_dir / "label_encoder.pkl"
@@ -94,7 +109,7 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         from catboost import CatBoostClassifier
         clf = CatBoostClassifier()
         clf.load_model(str(model_path_cls))
-    elif model_type == "sklearn_rf":
+    elif model_type in ("sklearn_rf", "svm", "mlp"):
         import joblib
         clf = joblib.load(model_path_cls)
     else:

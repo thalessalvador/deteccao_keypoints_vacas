@@ -18,11 +18,14 @@ from .classificacao.avaliacao_classificador import avaliar_classificador
 
 def _remover_arquivo_ou_pasta(caminho: Path, logger: logging.Logger) -> None:
     """
-    Remove um arquivo ou diretório se existir.
-
+    Remove um arquivo ou diretorio se existir.
+    
     Args:
         caminho (Path): Caminho a remover.
         logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Executa remocao quando possivel e registra o resultado no log.
     """
     try:
         if not caminho.exists():
@@ -39,12 +42,15 @@ def _remover_arquivo_ou_pasta(caminho: Path, logger: logging.Logger) -> None:
 
 def _remover_por_padroes(base_dir: Path, padroes: List[str], logger: logging.Logger) -> None:
     """
-    Remove arquivos em um diretório de acordo com padrões glob.
-
+    Remove arquivos em um diretorio de acordo com padroes glob.
+    
     Args:
-        base_dir (Path): Diretório base para aplicar os padrões.
-        padroes (List[str]): Padrões glob de arquivos.
+        base_dir (Path): Diretorio base para aplicar os padroes.
+        padroes (List[str]): Padroes glob de arquivos.
         logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Remove os arquivos encontrados e registra as acoes no log.
     """
     if not base_dir.exists():
         return
@@ -56,12 +62,15 @@ def _remover_por_padroes(base_dir: Path, padroes: List[str], logger: logging.Log
 
 def _limpar_resultados_subcomando(config: dict, subcomando: str, logger: logging.Logger) -> None:
     """
-    Limpa artefatos da execução anterior de um subcomando.
-
+    Limpa artefatos da execucao anterior de um subcomando.
+    
     Args:
-        config (dict): Configurações carregadas.
+        config (dict): Configuracoes carregadas.
         subcomando (str): Nome do subcomando da CLI.
         logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Remove arquivos/diretorios de saida relacionados ao subcomando.
     """
     processed_dir = Path(config["paths"]["processed"])
     models_dir = Path(config["paths"]["models"])
@@ -91,6 +100,8 @@ def _limpar_resultados_subcomando(config: dict, subcomando: str, logger: logging
                 "xgb_*.png",
                 "rf_*.png",
                 "catboost_*.png",
+                "svm_*.png",
+                "mlp_*.png",
             ],
             logger,
         )
@@ -113,11 +124,14 @@ def _limpar_resultados_subcomando(config: dict, subcomando: str, logger: logging
 
 def _limpar_resultados_pipeline_completo(config: dict, logger: logging.Logger) -> None:
     """
-    Limpa resultados anteriores das etapas executadas no pipeline completo.
-
+    Limpa resultados anteriores das etapas do pipeline completo.
+    
     Args:
-        config (dict): Configurações carregadas.
+        config (dict): Configuracoes carregadas.
         logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Executa limpeza sequencial das etapas previstas no pipeline completo.
     """
     etapas = [
         "preprocessar-pose",
@@ -131,9 +145,15 @@ def _limpar_resultados_pipeline_completo(config: dict, logger: logging.Logger) -
 
 def main() -> None:
     """
-    main: Ponto de entrada da CLI para o Projeto Vacas.
+    Ponto de entrada da CLI do projeto.
     
-    Gerencia os subcomandos e executa o pipeline de pose e classificação.
+    Monta argumentos, carrega configuracao e direciona a execucao para o subcomando solicitado.
+    
+    Args:
+        Nenhum.
+    
+    Returns:
+        None: Executa o fluxo correspondente ao comando informado.
     """
     parser = argparse.ArgumentParser(description="CLI Projeto Vacas")
     subparsers = parser.add_subparsers(dest="comando", help="Subcomandos disponíveis")
@@ -151,6 +171,17 @@ def main() -> None:
     cmd_inf = subparsers.add_parser("inferir-pose", help="Roda inferência em imagem")
     cmd_inf.add_argument("--imagem", type=str, required=True, help="Imagem para inferência")
     cmd_inf.add_argument("--desenhar", action="store_true", help="Salvar imagem com plot")
+    cmd_inf.add_argument(
+        "--desenhar-augmentacao",
+        action="store_true",
+        help="Salvar preview com keypoints originais + copias com ruido gaussiano"
+    )
+    cmd_inf.add_argument(
+        "--aug-copias",
+        type=int,
+        default=None,
+        help="Numero de copias no preview de augmentacao (padrao: config)"
+    )
     
     # 5. Gerar Features
     cmd_feats = subparsers.add_parser("gerar-features", help="Gera features geométricas para classificação")
@@ -190,7 +221,14 @@ def main() -> None:
         run_treinar_pose(config, logger)
         
     elif args.comando == "inferir-pose":
-        run_inferir_pose(config, args.imagem, args.desenhar, logger)
+        run_inferir_pose(
+            config,
+            args.imagem,
+            args.desenhar,
+            logger,
+            desenhar_augmentacao=args.desenhar_augmentacao,
+            aug_copias=args.aug_copias,
+        )
     
     elif args.comando == "gerar-features":
         _limpar_resultados_subcomando(config, "gerar-features", logger)
@@ -225,26 +263,43 @@ def main() -> None:
 
 def run_treinar_classificador(config: dict, logger: logging.Logger) -> Path:
     """
-    run_treinar_classificador: Executa a etapa de treinamento do classificador (Fase 3).
+    run_treinar_classificador: Executa a etapa de treino do classificador.
+    
+    Args:
+        config (dict): Dicionario de configuracao.
+        logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        Path: Caminho do modelo treinado salvo em disco.
     """
     return treinar_classificador(config, logger)
 
 def run_avaliar_classificador(config: dict, logger: logging.Logger) -> None:
     """
-    run_avaliar_classificador: Executa a avaliação do classificador (Fase 3).
+    run_avaliar_classificador: Executa a avaliacao do classificador.
+    
+    Args:
+        config (dict): Dicionario de configuracao.
+        logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Gera metricas e relatorios de avaliacao no diretorio de saida.
     """
     avaliar_classificador(config, logger)
 
 
 def run_preprocessar_pose(config: dict, logger: logging.Logger) -> None:
     """
-    run_preprocessar_pose: Executa a etapa de pré-processamento (Fase 1).
+    run_preprocessar_pose: Executa a etapa de pre-processamento (Fase 1).
     
-    Carrega anotações do Label Studio, converte para YOLO Pose e gera dataset.yaml.
-
+    Carrega anotacoes do Label Studio, converte para YOLO Pose e gera dataset.yaml.
+    
     Args:
-        config (dict): Dicionário de configuração.
+        config (dict): Dicionario de configuracao.
         logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Persiste dataset processado e arquivos auxiliares de configuracao.
     """
     logger.info("=== Fase 1: Pré-processamento (Label Studio -> YOLO) ===")
     raw_path = Path(config["paths"]["raw"]) / "dataset_keypoints"
@@ -280,15 +335,27 @@ def run_treinar_pose(config: dict, logger: logging.Logger) -> Path:
     logger.info(f"Treino finalizado. Melhor modelo: {best_model}")
     return best_model
 
-def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: logging.Logger) -> None:
+def run_inferir_pose(
+    config: dict,
+    img_path_str: str,
+    desenhar: bool,
+    logger: logging.Logger,
+    desenhar_augmentacao: bool = False,
+    aug_copias: int | None = None,
+) -> None:
     """
-    run_inferir_pose: Executa inferência de pose em uma imagem única.
-
+    run_inferir_pose: Executa inferencia de pose em uma imagem unica.
+    
     Args:
-        config (dict): Dicionário de configuração.
+        config (dict): Dicionario de configuracao.
         img_path_str (str): Caminho da imagem.
         desenhar (bool): Flag para gerar imagem com plot.
         logger (logging.Logger): Logger configurado.
+        desenhar_augmentacao (bool): Flag para gerar preview de augmentacao gaussiana.
+        aug_copias (int | None): Numero de copias para preview de augmentacao.
+    
+    Returns:
+        None: Imprime JSON de inferencia e salva imagens de saida quando solicitado.
     """
     logger.info(f"=== Fase 1: Inferência em {img_path_str} ===")
     img_path = Path(img_path_str)
@@ -330,11 +397,20 @@ def run_inferir_pose(config: dict, img_path_str: str, desenhar: bool, logger: lo
         
     dir_saida = Path(config["paths"]["outputs"]) / "inferencias" / "imagens_plotadas"
     
-    if desenhar:
+    if desenhar or desenhar_augmentacao:
         dir_saida.mkdir(parents=True, exist_ok=True)
         img_saida = dir_saida / img_path.name
         
-    resultado = inferir_keypoints_em_imagem(img_path, Path(model_path), config, desenhar, dir_saida, logger)
+    resultado = inferir_keypoints_em_imagem(
+        img_path,
+        Path(model_path),
+        config,
+        desenhar,
+        dir_saida,
+        logger,
+        desenhar_augmentacao=desenhar_augmentacao,
+        aug_copias=aug_copias,
+    )
     
     if desenhar:
         logger.info(f"Inferência concluída. Imagem com plot salva em: {dir_saida / img_path.name}")
@@ -357,7 +433,17 @@ def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
 
 def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bool, logger: logging.Logger) -> None:
     """
-    run_classificar_imagem: Executa classificação de uma imagem única.
+    run_classificar_imagem: Executa classificacao de uma imagem unica.
+    
+    Args:
+        config (dict): Dicionario de configuracao.
+        img_path (str): Caminho da imagem de entrada.
+        top_k (int): Quantidade de classes no ranking top-k.
+        desenhar (bool): Se True, salva imagem com predi??o.
+        logger (logging.Logger): Logger configurado.
+    
+    Returns:
+        None: Imprime JSON de classificacao e salva imagem de saida quando solicitado.
     """
     from .classificacao.inferencia_classificador import classificar_imagem_unica
     from pathlib import Path

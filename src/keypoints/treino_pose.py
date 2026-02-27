@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import torch
 from pathlib import Path
 import shutil
@@ -14,11 +14,17 @@ from ..util.contratos import LISTA_KEYPOINTS_ORDENADA
 
 def _extrair_grupo_validacao(caminho_imagem: Path, estrategia: str) -> str:
     """
-    Extrai chave de grupo para GroupKFold a partir do nome da imagem.
-
-    Estrategias:
-    - groupkfold_por_sessao: data + baia + camera
-    - groupkfold_por_anotador: proxy por prefixo + camera
+    _extrair_grupo_validacao: Extrai chave de grupo para validacao por GroupKFold.
+    
+    A chave e inferida do nome da imagem conforme a estrategia escolhida,
+    reduzindo vazamento entre treino e validacao.
+    
+    Args:
+        caminho_imagem (Path): Caminho da imagem usada para inferir o grupo.
+        estrategia (str): Estrategia de agrupamento (ex.: groupkfold_por_sessao).
+    
+    Returns:
+        str: Identificador de grupo utilizado no split por grupos.
     """
     stem = caminho_imagem.stem
     tokens = stem.split("_")
@@ -90,15 +96,15 @@ def _extrair_grupo_validacao(caminho_imagem: Path, estrategia: str) -> str:
 
 def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
     """
-    _ler_metricas_csv: LÃª o arquivo results.csv gerado pelo YOLO e retorna as mÃ©tricas da Ãºltima Ã©poca.
+    _ler_metricas_csv: Lê o arquivo results.csv gerado pelo YOLO e retorna as métricas da última época.
 
     Args:
         csv_path (Path): Caminho do arquivo results.csv gerado pelo YOLO.
-        fold_idx (int): Ãndice do fold (1-based) para identificaÃ§Ã£o na tabela.
+        fold_idx (int): Índice do fold (1-based) para identificação na tabela.
 
     Returns:
-        Dict[str, Any]: DicionÃ¡rio com mÃ©tricas (Box_mAP50, Box_mAP50-95, Pose_mAP50, Pose_mAP50-95).
-        Retorna dicionÃ¡rio vazio se falhar a leitura ou arquivo nÃ£o existir.
+        Dict[str, Any]: Dicionário com métricas (Box_mAP50, Box_mAP50-95, Pose_mAP50, Pose_mAP50-95).
+        Retorna dicionário vazio se falhar a leitura ou arquivo não existir.
     """
     if not csv_path.exists():
         return {}
@@ -108,8 +114,8 @@ def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
     try:
         with open(csv_path, 'r') as f:
             reader = csv.reader(f)
-            header = next(reader) # Pular cabeÃ§alho
-            # header geralmente tem nomes com espaÃ§os, ex: " metrics/mAP50(B)"
+            header = next(reader) # Pular cabeçalho
+            # header geralmente tem nomes com espaços, ex: " metrics/mAP50(B)"
             header = [h.strip() for h in header]
             
             last_row = None
@@ -122,7 +128,7 @@ def _ler_metricas_csv(csv_path: Path, fold_idx: int) -> Dict[str, Any]:
             
             def get_val(name: str) -> float:
                 """Retorna valor float da metrica solicitada na ultima linha do CSV."""
-                # Tenta encontrar correspondencia exata apÃ³s strip
+                # Tenta encontrar correspondencia exata após strip
                 name_clean = name.strip()
                 if name_clean in header:
                     idx = header.index(name_clean)
@@ -155,7 +161,7 @@ def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.
     _imprimir_tabela_resumo: Imprime uma tabela formatada com os resultados dos folds.
 
     Args:
-        metrics_list (List[Dict[str, Any]]): Lista de dicionÃ¡rios com mÃ©tricas de cada fold.
+        metrics_list (List[Dict[str, Any]]): Lista de dicionários com métricas de cada fold.
         logger (logging.Logger): Logger para imprimir a tabela.
 
     Returns:
@@ -164,7 +170,7 @@ def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.
     if not metrics_list:
         return
 
-    # CabeÃ§alho
+    # Cabeçalho
     logger.info("\n" + "="*80)
     logger.info(f"{'Fold':^6} | {'Epocas':^8} | {'Box mAP50':^12} | {'Box mAP50-95':^14} | {'Pose mAP50':^12} | {'Pose mAP50-95':^15}")
     logger.info("-" * 80)
@@ -187,7 +193,7 @@ def _imprimir_tabela_resumo(metrics_list: List[Dict[str, Any]], logger: logging.
         
     logger.info("-" * 80)
     
-    # MÃ©dia
+    # Média
     if count > 0:
         avg_box_50 = soma_box_50 / count
         avg_box_95 = soma_box_95 / count
@@ -202,13 +208,13 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
     """
     treinar_modelo_pose: Executa o treinamento do modelo YOLOv8 Pose.
 
-    Suporta validaÃ§Ã£o cruzada (K-Fold) se configurado.
+    Suporta validação cruzada (K-Fold) se configurado.
     Se k_folds > 1, divide o dataset e treina K vezes, salvando os resultados.
-    Retorna o caminho do 'melhor' modelo (do Ãºltimo fold ou lÃ³gica de seleÃ§Ã£o).
+    Retorna o caminho do 'melhor' modelo (do último fold ou lógica de seleção).
 
     Args:
-        config (Dict[str, Any]): ConfiguraÃ§Ãµes do sistema.
-        dir_yolo (Path): DiretÃ³rio do dataset YOLO (com images/ e labels/).
+        config (Dict[str, Any]): Configurações do sistema.
+        dir_yolo (Path): Diretório do dataset YOLO (com images/ e labels/).
         logger (logging.Logger): Logger.
 
     Returns:
@@ -229,7 +235,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
     device = pose_cfg.get("device", "0")
     if device != "cpu":
         if not torch.cuda.is_available():
-            logger.warning(f"CUDA nÃ£o disponÃ­vel, mas device='{device}' foi solicitado. ForÃ§ando device='cpu'.")
+            logger.warning(f"CUDA não disponível, mas device='{device}' foi solicitado. Forçando device='cpu'.")
             device = "cpu"
             
     model_name = pose_cfg.get("model_name", "yolov8n-pose.pt")
@@ -249,17 +255,17 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
         f"K-Folds: {k_folds}. Estrategia validacao: {estrategia_validacao}"
     )
     
-    # Preparar diretÃ³rio de runs
+    # Preparar diretório de runs
     runs_dir = Path("modelos/pose/runs").resolve()
     runs_dir.mkdir(parents=True, exist_ok=True)
     
     # Se K=1, treino simples (sem split complexo, usa tudo ou split automatico do YOLO se definido val)
-    # Mas como conversor jogou tudo em images/, precisamos definir validaÃ§Ã£o.
-    # Vamos assumir que se k=1, usamos 20% para validaÃ§Ã£o se nÃ£o houver pasta val separada.
+    # Mas como conversor jogou tudo em images/, precisamos definir validação.
+    # Vamos assumir que se k=1, usamos 20% para validação se não houver pasta val separada.
     # O conversor do update anterior copia tudo para images/.
     
     if k_folds <= 1:
-        # Modo simples: Treinar com split aleatÃ³rio (YOLO faz se dermos fraction? NÃ£o, YOLO precisa de dataset.yaml com paths)
+        # Modo simples: Treinar com split aleatório (YOLO faz se dermos fraction Não, YOLO precisa de dataset.yaml com paths)
         # Vamos criar um split 80/20 manual
         train_files, val_files = _split_manual(image_files, 0.2)
         yaml_path = _criar_yaml_split(
@@ -327,7 +333,7 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
             
             logger.info(f"Fold {fold_idx}: {len(fold_train_files)} treino, {len(fold_val_files)} validacao")
             
-            # Criar YAML temporÃ¡rio para este fold
+            # Criar YAML temporário para este fold
             yaml_fold = _criar_yaml_split(
                 dir_yolo,
                 fold_train_files,
@@ -358,13 +364,13 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
                 amp,
             )
             
-            # Coletar mÃ©tricas do results.csv
+            # Coletar métricas do results.csv
             metrics = _ler_metricas_csv(project_dir / "results.csv", fold_idx)
             if metrics:
                 fold_metrics.append(metrics)
                 
-                # Verifica se Ã© o melhor modelo atÃ© agora (baseado em Pose mAP50-95)
-                # Se nÃ£o tiver Pose metrics (ex: dataset sÃ³ bbox), usa Box mAP50-95
+                # Verifica se é o melhor modelo até agora (baseado em Pose mAP50-95)
+                # Se não tiver Pose metrics (ex: dataset só bbox), usa Box mAP50-95
                 current_map = metrics.get("Pose_mAP50-95", 0.0)
                 if current_map == 0.0:
                      current_map = metrics.get("Box_mAP50-95", 0.0)
@@ -376,14 +382,14 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
                     best_model_path = final_model
                     logger.info(f"Novo melhor modelo detectado: Fold {fold_idx}")
             else:
-                 # Fallback se nÃ£o conseguir ler mÃ©tricas: assume o Ãºltimo como best se ainda n tinha
+                 # Fallback se não conseguir ler métricas: assume o último como best se ainda n tinha
                  if best_model_path is None:
                      best_model_path = final_model
             
         logger.info("K-Fold concluído.")
         _imprimir_tabela_resumo(fold_metrics, logger)
         
-        # Salvar relatÃ³rio JSON
+        # Salvar relatório JSON
         relatorio = {
             "folds": fold_metrics,
             "melhor_modelo": {
@@ -410,11 +416,11 @@ def treinar_modelo_pose(config: Dict[str, Any], dir_yolo: Path, logger: logging.
 
 def _split_manual(files: List[Path], val_frac: float) -> Any:
     """
-    _split_manual: Realiza divisÃ£o aleatÃ³ria de uma lista de arquivos.
+    _split_manual: Realiza divisão aleatória de uma lista de arquivos.
 
     Args:
         files (List[Path]): Lista de caminhos de arquivos.
-        val_frac (float): FraÃ§Ã£o de validaÃ§Ã£o (ex: 0.2 para 20%).
+        val_frac (float): Fração de validação (ex: 0.2 para 20%).
 
     Returns:
         Tuple[List[Path], List[Path]]: Tupla (lista_treino, lista_validacao).
@@ -470,23 +476,20 @@ def _criar_yaml_split(
     forcar_diversidade_batch: bool = False,
     estrategia_grupo_diversidade: str = "groupkfold_por_sessao",
 ) -> Path:
-    """
-    _criar_yaml_split: Gera um arquivo YAML de configuraÃ§Ã£o de dataset para o YOLO.
-
-    Cria arquivos .txt com a lista de caminhos absolutos das imagens de treino e validaÃ§Ã£o,
-    e entÃ£o cria o dataset.yaml apontando para esses .txt.
-
-    Args:
-        root_dir (Path): DiretÃ³rio raiz para salvar os splits.
-        train_files (List[Path]): Arquivos de treino.
-        val_files (List[Path]): Arquivos de validaÃ§Ã£o.
-        name (str): Identificador Ãºnico para o split (ex: 'fold_1').
-        logger (logging.Logger): Logger.
-
-    Returns:
+    """Gera o YAML do split de treino/validacao para o YOLO.
+    
+    Parametros:
+        root_dir (Path): Diretorio raiz para salvar arquivos auxiliares do split.
+        train_files (List[Path]): Lista de imagens de treino.
+        val_files (List[Path]): Lista de imagens de validacao.
+        name (str): Nome identificador do split (ex.: "fold_1").
+        logger (logging.Logger): Logger para mensagens operacionais.
+        forcar_diversidade_batch (bool): Reordena treino para alternar grupos quando habilitado.
+        estrategia_grupo_diversidade (str): Estrategia usada para definir grupos da reordenacao.
+    
+    Retorno:
         Path: Caminho do arquivo YAML gerado.
     """
-    # Criar arquivos .txt com listas de imagens
     txt_dir = root_dir / "splits"
     txt_dir.mkdir(exist_ok=True, parents=True)
     
@@ -548,21 +551,26 @@ def _executar_yolo(
     cache: Any = False,
     amp: bool = True,
 ) -> Path:
-    """
-    _executar_yolo: Instancia e inÃ­cia o processo de treinamento do YOLO.
-
-    Args:
-        model_name (str): Nome ou caminho do modelo base (ex: 'yolov8n-pose.pt').
-        yaml_path (Path): Caminho do dataset.yaml configurado.
-        epochs (int): NÃºmero de Ã©pocas.
-        imgsz (int): Tamanho da imagem.
+    """Executa o treinamento do YOLO pose para um split especifico.
+    
+    Parametros:
+        model_name (str): Nome/caminho do modelo base (ex.: "yolov8n-pose.pt").
+        yaml_path (Path): Arquivo YAML do dataset/split.
+        epochs (int): Numero de epocas de treino.
+        imgsz (int): Resolucao de entrada.
         batch (int): Tamanho do batch.
-        device (str): Device ID (ex: '0' ou 'cpu').
-        project_dir (Path): DiretÃ³rio para salvar os resultados deste treino.
-        logger (logging.Logger): Logger.
-
-    Returns:
-        Path: Caminho do arquivo de pesos do melhor modelo treinado (best.pt) ou last.pt.
+        device (str): Dispositivo de treino (ex.: "0" ou "cpu").
+        project_dir (Path): Diretorio de saida da execucao.
+        logger (logging.Logger): Logger para mensagens de progresso.
+        patience (int): Paciencia para early stopping.
+        usar_aug (bool): Ativa/desativa augmentations de treino.
+        aug_cfg (Dict[str, Any]): Configuracoes de augmentations.
+        workers (int): Quantidade de workers de dataloader.
+        cache (Any): Politica de cache repassada ao YOLO.
+        amp (bool): Ativa mixed precision (AMP) quando suportado.
+    
+    Retorno:
+        Path: Caminho do melhor checkpoint (`best.pt`) ou fallback (`last.pt`).
     """
     try:
         model = YOLO(model_name)
