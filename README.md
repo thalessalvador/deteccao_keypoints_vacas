@@ -746,6 +746,9 @@ Inclui:
 Não inclui:
 - `inferir-pose`
 - `classificar-imagem`
+
+Estas últimas, por não fazerem parte do pipeline principal, precisam ser acionadas manualmente, por comandos CLI já descritos acima.
+
 ---
 
 ## Resultados alcançados (última execução - mlp_torch)
@@ -776,7 +779,7 @@ Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da ú
 
 Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79% (o animal correto estava entre os 3 melhores classificados em mais de 79% dos casos), é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore.
 
-Uma possível melhora também poderia ser obtida, incluindo outras features usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados núméricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no exercício, a identificação exclusiva pelos keypoints.
+Uma possível melhora também poderia ser obtida, incluindo outras features usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no exercício, a identificação exclusiva pelos keypoints.
 
 ---
 
