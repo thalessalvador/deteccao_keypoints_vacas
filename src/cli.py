@@ -102,6 +102,7 @@ def _limpar_resultados_subcomando(config: dict, subcomando: str, logger: logging
                 "catboost_*.png",
                 "svm_*.png",
                 "mlp_*.png",
+                "siamese_torch_*.png",
             ],
             logger,
         )

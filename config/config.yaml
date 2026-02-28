@@ -47,7 +47,7 @@ pose:
     erasing: 0.2 # Probabilidade de apagamento aleatorio (random erasing)
 
 classificacao:
-  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp", "mlp_torch"
+  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp", "mlp_torch", "siamese_torch"
   modelo_padrao: "mlp_torch"
   split_teste: 0.10 # Percentual de teste externo (caso real) por vaca
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
@@ -165,6 +165,24 @@ classificacao:
     patience: 30 # Paciencia do early stopping pela metrica escolhida
     min_delta: 0.0 # Melhora minima de F1 para resetar a paciencia
     early_stop_metric: "f1_macro" # "f1_macro", "val_loss" ou "accuracy"
+    seed: 42 # Semente para reproducao
+  # Hiperparametros base do Siamese Torch (embedding + classificacao por prototipos)
+  siamese_torch:
+    device: "cuda" # "cuda", "cpu", "0", "1", etc.
+    embedding_dim: 64 # Dimensao do vetor de embedding
+    hidden_layer_sizes: [256, 128] # Camadas ocultas dinamicas
+    activation: "relu" # "relu", "gelu", "elu", "leaky_relu"
+    dropout: 0.10 # Dropout entre camadas ocultas
+    learning_rate: 0.001 # Taxa de aprendizado (AdamW)
+    weight_decay: 0.0001 # Regularizacao L2 (weight decay)
+    batch_size: 128 # Tamanho do mini-lote de treino/inferencia
+    batch_balanceado: true # Se true, monta batches balanceados por classe (P classes x K amostras)
+    classes_por_batch: 16 # P: classes distintas por batch balanceado
+    amostras_por_classe: 4 # K: amostras por classe em cada batch balanceado
+    max_epochs: 300 # Maximo de epocas
+    patience: 30 # Paciencia do early stopping por F1 de validacao
+    min_delta: 0.0 # Melhora minima de F1 para resetar paciencia
+    temperature: 0.15 # Temperatura usada na loss/probabilidades por similaridade
     seed: 42 # Semente para reproducao
   # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest/SVM/MLP (menos forca bruta que busca em grade).
   # metodo:

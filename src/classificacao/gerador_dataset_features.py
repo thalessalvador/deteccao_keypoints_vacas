@@ -670,7 +670,7 @@ def _calcular_features_geometricas(kpts: np.ndarray, bbox_info: Optional[Dict[st
     
     # Recomendadas
     feat["angulo_withers_back_tail_head"] = calcular_angulo_tripla("withers", "back", "tail_head")
-    
+
     # --- FEATURES COMPLEXAS (NOVAS) ---
     
     # 1. Áreas de Polígonos (Normalizadas pela área do bbox)

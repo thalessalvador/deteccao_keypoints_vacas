@@ -12,6 +12,7 @@ import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
 from .mlp_torch import carregar_checkpoint_mlp_torch, predict_proba_mlp_torch
+from .siamese_torch import carregar_checkpoint_siamese_torch, predict_proba_siamese_torch
 
 
 def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -72,17 +73,24 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         model_path = models_dir / "mlp_model.joblib"
     elif model_type == "mlp_torch":
         model_path = models_dir / "mlp_torch_model.pt"
+    elif model_type == "siamese_torch":
+        model_path = models_dir / "siamese_torch_model.pt"
     else:
         model_path = models_dir / "xgboost_model.json"
     le_path = models_dir / "label_encoder.pkl"
     fn_path = models_dir / "feature_names.pkl" # Se existir
     scaler_torch_path = models_dir / "mlp_torch_scaler.joblib"
+    scaler_siamese_path = models_dir / "siamese_torch_scaler.joblib"
     
     if not model_path.exists() or not le_path.exists():
         logger.error(f"Modelo não encontrado em {models_dir}. Treine antes.")
         return
     if model_type == "mlp_torch" and not scaler_torch_path.exists():
         logger.error(f"Scaler do MLP Torch não encontrado em {models_dir}. Treine antes.")
+        return
+
+    if model_type == "siamese_torch" and not scaler_siamese_path.exists():
+        logger.error("Scaler do Siamese Torch nao encontrado em modelos/classificacao/modelos_salvos. Treine antes.")
         return
 
     # Carregar Dados
@@ -145,6 +153,14 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
             device_cfg=config.get("classificacao", {}).get("mlp_torch", {}).get("device", "cuda"),
             logger=logger,
         )
+    elif model_type == "siamese_torch":
+        clf = None
+        artefato_siamese = carregar_checkpoint_siamese_torch(
+            model_path=model_path,
+            scaler_path=scaler_siamese_path,
+            device_cfg=config.get("classificacao", {}).get("siamese_torch", {}).get("device", "cuda"),
+            logger=logger,
+        )
     else:
         clf = xgb.XGBClassifier()
         clf.load_model(model_path)
@@ -155,6 +171,13 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
             X=X_test,
             artefato=artefato_torch,
             batch_size=int(config.get("classificacao", {}).get("mlp_torch", {}).get("batch_size", 1024)),
+        )
+        preds = np.argmax(probs, axis=1)
+    elif model_type == "siamese_torch":
+        probs = predict_proba_siamese_torch(
+            X=X_test,
+            artefato=artefato_siamese,
+            batch_size=int(config.get("classificacao", {}).get("siamese_torch", {}).get("batch_size", 1024)),
         )
         preds = np.argmax(probs, axis=1)
     else:

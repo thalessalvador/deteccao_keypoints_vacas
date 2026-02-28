@@ -12,6 +12,7 @@ import xgboost as xgb
 from ..util.io_arquivos import garantir_diretorio
 from ..classificacao.gerador_dataset_features import _selecionar_instancia_alvo, _normalizar_orientacao_keypoints, _calcular_features_geometricas, _ler_cfg_filtro_confianca_pose, _calcular_confianca_media_keypoints
 from .mlp_torch import carregar_checkpoint_mlp_torch, predict_proba_mlp_torch
+from .siamese_torch import carregar_checkpoint_siamese_torch, predict_proba_siamese_torch
 
 
 def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,11 +98,14 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         model_path_cls = cls_model_dir / "mlp_model.joblib"
     elif model_type == "mlp_torch":
         model_path_cls = cls_model_dir / "mlp_torch_model.pt"
+    elif model_type == "siamese_torch":
+        model_path_cls = cls_model_dir / "siamese_torch_model.pt"
     else:
         model_path_cls = cls_model_dir / "xgboost_model.json"
     le_path = cls_model_dir / "label_encoder.pkl"
     feats_path = cls_model_dir / "feature_names.pkl"
     scaler_torch_path = cls_model_dir / "mlp_torch_scaler.joblib"
+    scaler_siamese_path = cls_model_dir / "siamese_torch_scaler.joblib"
     
     if not model_path_cls.exists() or not le_path.exists() or not feats_path.exists():
         msg = "Modelos de classificação não encontrados. Execute 'treinar-classificador' primeiro."
@@ -109,6 +113,10 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         return {"erro": msg}
     if model_type == "mlp_torch" and not scaler_torch_path.exists():
         msg = "Scaler do MLP Torch não encontrado. Execute 'treinar-classificador' novamente."
+        logger.error(msg)
+        return {"erro": msg}
+    if model_type == "siamese_torch" and not scaler_siamese_path.exists():
+        msg = "Scaler do Siamese Torch nao encontrado. Execute 'treinar-classificador' novamente."
         logger.error(msg)
         return {"erro": msg}
         
@@ -126,6 +134,14 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
             model_path=model_path_cls,
             scaler_path=scaler_torch_path,
             device_cfg=config.get("classificacao", {}).get("mlp_torch", {}).get("device", "cuda"),
+            logger=logger,
+        )
+    elif model_type == "siamese_torch":
+        clf = None
+        artefato_siamese = carregar_checkpoint_siamese_torch(
+            model_path=model_path_cls,
+            scaler_path=scaler_siamese_path,
+            device_cfg=config.get("classificacao", {}).get("siamese_torch", {}).get("device", "cuda"),
             logger=logger,
         )
     else:
@@ -191,6 +207,12 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
             X=df_input,
             artefato=artefato_torch,
             batch_size=int(config.get("classificacao", {}).get("mlp_torch", {}).get("batch_size", 1024)),
+        )[0]
+    elif model_type == "siamese_torch":
+        probs = predict_proba_siamese_torch(
+            X=df_input,
+            artefato=artefato_siamese,
+            batch_size=int(config.get("classificacao", {}).get("siamese_torch", {}).get("batch_size", 1024)),
         )[0]
     else:
         probs = clf.predict_proba(df_input)[0] # Array de probabilidades

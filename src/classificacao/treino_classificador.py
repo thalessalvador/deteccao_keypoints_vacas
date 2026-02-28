@@ -22,6 +22,12 @@ from sklearn.preprocessing import StandardScaler
 
 from ..util.io_arquivos import garantir_diretorio
 from .mlp_torch import MLPDinamicoTorch, resolver_device_torch, salvar_checkpoint_mlp_torch
+from .siamese_torch import (
+    treinar_siamese_torch,
+    salvar_checkpoint_siamese_torch,
+    predict_proba_siamese_torch,
+    carregar_checkpoint_siamese_torch,
+)
 
 def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Path:
     """
@@ -146,6 +152,8 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
         return _treinar_mlp(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     elif model_type == "mlp_torch":
         return _treinar_mlp_torch(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
+    elif model_type == "siamese_torch":
+        return _treinar_siamese_torch(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     else:
         logger.warning(f"Modelo {model_type} desconhecido. Usando XGBoost.")
         return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
@@ -2412,6 +2420,387 @@ def _treinar_mlp_torch(
             "n_features_entrada": n_features,
             "n_classes": n_classes,
             "hidden_layer_sizes": [int(v) for v in params_modelo_finais["hidden_layers"]],
+        },
+        "historico_treino": historico,
+        "classification_report": classification_report(y_val_np, preds_val, output_dict=True, zero_division=0),
+    }
+    with open(reports_dir / "metricas_classificacao_treino.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+    return model_path
+
+
+def _treinar_siamese_torch(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """
+    Treina classificador siames em PyTorch (embedding) com classificacao por prototipos.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos codificados.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes de classificacao.
+        models_dir (Path): Diretorio de saida de modelos.
+        reports_dir (Path): Diretorio de saida de relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do checkpoint salvo.
+    """
+    logger.info("Treinando Siamese Torch...")
+    cfg_sm = config_cls.get("siamese_torch", {})
+    seed = int(cfg_sm.get("seed", 42))
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    device_cfg = cfg_sm.get("device", config_cls.get("device", "cuda"))
+    device = resolver_device_torch(device_cfg, logger=logger)
+    logger.info(f"Siamese Torch em dispositivo: {device}")
+
+    X_train, X_val, y_train, y_val = _preparar_split_interno_com_grupos(
+        X=X,
+        y=y,
+        groups=groups,
+        origem_instancia=origem_instancia,
+        config_cls=config_cls,
+        logger=logger,
+    )
+
+    scaler = StandardScaler()
+    X_train_np = scaler.fit_transform(X_train).astype(np.float32)
+    X_val_np = scaler.transform(X_val).astype(np.float32)
+    y_train_np = y_train.astype(np.int64)
+    y_val_np = y_val.astype(np.int64)
+
+    n_features = int(X_train_np.shape[1])
+    n_classes = int(len(np.unique(y_train_np)))
+
+    hidden_base = cfg_sm.get("hidden_layer_sizes", [256, 128])
+    if isinstance(hidden_base, list):
+        hidden_base = [int(v) for v in hidden_base]
+    else:
+        hidden_base = [256, 128]
+
+    params_modelo_base = {
+        "input_dim": n_features,
+        "embedding_dim": int(cfg_sm.get("embedding_dim", 64)),
+        "hidden_layers": hidden_base,
+        "activation": str(cfg_sm.get("activation", "relu")),
+        "dropout": float(cfg_sm.get("dropout", 0.1)),
+    }
+    params_treino_base = {
+        "lr": float(cfg_sm.get("learning_rate", 1e-3)),
+        "weight_decay": float(cfg_sm.get("weight_decay", 1e-4)),
+        "batch_size": int(cfg_sm.get("batch_size", 128)),
+        "max_epochs": int(cfg_sm.get("max_epochs", 300)),
+        "patience": int(cfg_sm.get("patience", 30)),
+        "min_delta": float(cfg_sm.get("min_delta", 0.0)),
+        "temperature": float(cfg_sm.get("temperature", 0.15)),
+        "batch_balanceado": bool(cfg_sm.get("batch_balanceado", True)),
+        "classes_por_batch": int(cfg_sm.get("classes_por_batch", 16)),
+        "amostras_por_classe": int(cfg_sm.get("amostras_por_classe", 4)),
+    }
+    params_modelo_finais = dict(params_modelo_base)
+    params_treino_finais = dict(params_treino_base)
+    resumo_otimizacao: Optional[Dict[str, Any]] = None
+
+    cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
+    if bool(cfg_otimizacao.get("habilitar", False)):
+        metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
+        n_trials = int(cfg_otimizacao.get("n_trials", 40))
+        timeout_segundos = cfg_otimizacao.get("timeout_segundos")
+        historico_trials: List[Dict[str, Any]] = []
+
+        def _avaliar_trial(params_modelo_trial: Dict[str, Any], params_treino_trial: Dict[str, Any]) -> float:
+            resultado_trial = treinar_siamese_torch(
+                X_train_np=X_train_np,
+                y_train_np=y_train_np,
+                X_val_np=X_val_np,
+                y_val_np=y_val_np,
+                params_modelo=params_modelo_trial,
+                params_treino=params_treino_trial,
+                device=device,
+                seed=seed,
+            )
+            return float(resultado_trial["best_f1"])
+
+        if metodo == "optuna":
+            try:
+                import optuna  # type: ignore
+
+                logger.info(f"Iniciando otimização de hiperparâmetros Siamese Torch com Optuna ({n_trials} trials)...")
+                sampler = optuna.samplers.TPESampler(seed=seed)
+                estudo = optuna.create_study(direction="maximize", sampler=sampler)
+
+                def objetivo(trial: Any) -> float:
+                    n_layers = trial.suggest_int("n_layers", 1, 3)
+                    layer_choices = [64, 128, 256, 512]
+                    hidden = [trial.suggest_categorical(f"hidden_{i}", layer_choices) for i in range(n_layers)]
+                    embedding_dim = trial.suggest_categorical("embedding_dim", [32, 64, 128])
+                    activation = trial.suggest_categorical("activation", ["relu", "gelu", "elu", "leaky_relu"])
+                    dropout = trial.suggest_float("dropout", 0.0, 0.4)
+                    lr = trial.suggest_float("lr", 1e-4, 5e-3, log=True)
+                    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+                    batch_size = trial.suggest_categorical("batch_size", [64, 128, 256])
+                    temperature = trial.suggest_categorical("temperature", [0.07, 0.10, 0.15, 0.20])
+                    classes_por_batch = trial.suggest_categorical("classes_por_batch", [8, 12, 16])
+                    amostras_por_classe = trial.suggest_categorical("amostras_por_classe", [2, 4, 6])
+
+                    params_modelo_trial = dict(params_modelo_base)
+                    params_modelo_trial.update(
+                        {
+                            "hidden_layers": hidden,
+                            "embedding_dim": int(embedding_dim),
+                            "activation": activation,
+                            "dropout": float(dropout),
+                        }
+                    )
+                    params_treino_trial = dict(params_treino_base)
+                    params_treino_trial.update(
+                        {
+                            "lr": float(lr),
+                            "weight_decay": float(weight_decay),
+                            "batch_size": int(batch_size),
+                            "temperature": float(temperature),
+                            "batch_balanceado": True,
+                            "classes_por_batch": int(classes_por_batch),
+                            "amostras_por_classe": int(amostras_por_classe),
+                        }
+                    )
+                    return _avaliar_trial(params_modelo_trial, params_treino_trial)
+
+                estudo.optimize(
+                    objetivo,
+                    n_trials=n_trials,
+                    timeout=(int(timeout_segundos) if timeout_segundos else None),
+                    show_progress_bar=False,
+                )
+
+                best = estudo.best_trial.params
+                n_layers_best = int(best.get("n_layers", 1))
+                hidden_best = [int(best[f"hidden_{i}"]) for i in range(n_layers_best)]
+                params_modelo_finais.update(
+                    {
+                        "hidden_layers": hidden_best,
+                        "embedding_dim": int(best.get("embedding_dim", params_modelo_base["embedding_dim"])),
+                        "activation": str(best.get("activation", params_modelo_base["activation"])),
+                        "dropout": float(best.get("dropout", params_modelo_base["dropout"])),
+                    }
+                )
+                params_treino_finais.update(
+                    {
+                        "lr": float(best.get("lr", params_treino_base["lr"])),
+                        "weight_decay": float(best.get("weight_decay", params_treino_base["weight_decay"])),
+                        "batch_size": int(best.get("batch_size", params_treino_base["batch_size"])),
+                        "temperature": float(best.get("temperature", params_treino_base["temperature"])),
+                        "batch_balanceado": True,
+                        "classes_por_batch": int(best.get("classes_por_batch", params_treino_base["classes_por_batch"])),
+                        "amostras_por_classe": int(best.get("amostras_por_classe", params_treino_base["amostras_por_classe"])),
+                    }
+                )
+                resumo_otimizacao = {
+                    "habilitado": True,
+                    "metodo_solicitado": metodo,
+                    "metodo_executado": "optuna",
+                    "n_trials_solicitados": n_trials,
+                    "n_trials_executados": len(estudo.trials),
+                    "melhor_f1_macro": float(estudo.best_value),
+                    "historico_trials": [
+                        {"trial": int(t.number) + 1, "value": (None if t.value is None else float(t.value))}
+                        for t in estudo.trials
+                    ],
+                }
+            except Exception as exc:
+                logger.warning(f"Falha ao usar Optuna para Siamese Torch ({exc}). Fallback para random search.")
+                metodo = "random"
+
+        if metodo != "optuna":
+            logger.info(f"Iniciando otimização Siamese Torch com random search ({n_trials} trials)...")
+            gerador = np.random.default_rng(seed)
+            melhor_score = -1.0
+            melhor_modelo_cfg: Dict[str, Any] = {}
+            melhor_treino_cfg: Dict[str, Any] = {}
+            layer_choices = [64, 128, 256, 512]
+            activations = ["relu", "gelu", "elu", "leaky_relu"]
+            batch_choices = [64, 128, 256]
+            temperature_choices = [0.07, 0.10, 0.15, 0.20]
+            classes_choices = [8, 12, 16]
+            amostras_choices = [2, 4, 6]
+            for _ in range(n_trials):
+                n_layers = int(gerador.integers(1, 4))
+                hidden = [layer_choices[int(gerador.integers(0, len(layer_choices)))] for _ in range(n_layers)]
+                params_modelo_trial = dict(params_modelo_base)
+                params_modelo_trial.update(
+                    {
+                        "hidden_layers": hidden,
+                        "embedding_dim": int([32, 64, 128][int(gerador.integers(0, 3))]),
+                        "activation": activations[int(gerador.integers(0, len(activations)))],
+                        "dropout": float(gerador.uniform(0.0, 0.4)),
+                    }
+                )
+                params_treino_trial = dict(params_treino_base)
+                params_treino_trial.update(
+                    {
+                        "lr": float(np.exp(gerador.uniform(np.log(1e-4), np.log(5e-3)))),
+                        "weight_decay": float(np.exp(gerador.uniform(np.log(1e-6), np.log(1e-2)))),
+                        "batch_size": int(batch_choices[int(gerador.integers(0, len(batch_choices)))]),
+                        "temperature": float(temperature_choices[int(gerador.integers(0, len(temperature_choices)))]),
+                        "batch_balanceado": True,
+                        "classes_por_batch": int(classes_choices[int(gerador.integers(0, len(classes_choices)))]),
+                        "amostras_por_classe": int(amostras_choices[int(gerador.integers(0, len(amostras_choices)))]),
+                    }
+                )
+                score = _avaliar_trial(params_modelo_trial, params_treino_trial)
+                historico_trials.append({"trial": len(historico_trials) + 1, "value": float(score)})
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_modelo_cfg = params_modelo_trial
+                    melhor_treino_cfg = params_treino_trial
+
+            params_modelo_finais.update(melhor_modelo_cfg)
+            params_treino_finais.update(melhor_treino_cfg)
+            resumo_otimizacao = {
+                "habilitado": True,
+                "metodo_solicitado": str(cfg_otimizacao.get("metodo", "random")),
+                "metodo_executado": "random_search",
+                "n_trials_solicitados": n_trials,
+                "n_trials_executados": n_trials,
+                "melhor_f1_macro": float(melhor_score),
+                "historico_trials": historico_trials,
+            }
+
+    resultado = treinar_siamese_torch(
+        X_train_np=X_train_np,
+        y_train_np=y_train_np,
+        X_val_np=X_val_np,
+        y_val_np=y_val_np,
+        params_modelo=params_modelo_finais,
+        params_treino=params_treino_finais,
+        device=device,
+        seed=seed,
+    )
+
+    model = resultado["model"]
+    prototipos = resultado["prototipos"]
+    acc = float(resultado["best_acc"])
+    f1 = float(resultado["best_f1"])
+    best_val_loss = float(resultado["best_val_loss"])
+    melhor_epoca = int(resultado["best_epoch"])
+    n_epochs_exec = int(resultado["n_epochs_executadas"])
+    historico = resultado["historico"]
+
+    total_parametros = int(sum(p.numel() for p in model.parameters()))
+    arquitetura = [n_features] + list(params_modelo_finais["hidden_layers"]) + [int(params_modelo_finais["embedding_dim"])]
+    logger.info(
+        "Siamese Torch Summary -> arquitetura=%s | ativacao=%s | dropout=%.3f | emb_dim=%d | lr=%.6f | wd=%.6f | batch=%d | max_epochs=%d | best_epoch=%d | params=%d",
+        arquitetura,
+        str(params_modelo_finais.get("activation", "relu")),
+        float(params_modelo_finais.get("dropout", 0.0)),
+        int(params_modelo_finais["embedding_dim"]),
+        float(params_treino_finais["lr"]),
+        float(params_treino_finais["weight_decay"]),
+        int(params_treino_finais["batch_size"]),
+        int(params_treino_finais["max_epochs"]),
+        melhor_epoca,
+        total_parametros,
+    )
+    logger.info(f"Siamese Torch Validação Interna - Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+
+    model_path = models_dir / "siamese_torch_model.pt"
+    scaler_path = models_dir / "siamese_torch_scaler.joblib"
+    salvar_checkpoint_siamese_torch(
+        model_path=model_path,
+        scaler_path=scaler_path,
+        model=model,
+        scaler=scaler,
+        prototipos=prototipos,
+        metadata={
+            "input_dim": int(params_modelo_finais["input_dim"]),
+            "embedding_dim": int(params_modelo_finais["embedding_dim"]),
+            "hidden_layers": [int(v) for v in params_modelo_finais["hidden_layers"]],
+            "activation": str(params_modelo_finais.get("activation", "relu")),
+            "dropout": float(params_modelo_finais.get("dropout", 0.0)),
+            "temperature": float(params_treino_finais["temperature"]),
+            "device_treino": str(device),
+        },
+    )
+    joblib.dump(list(X.columns), models_dir / "feature_names.pkl")
+    logger.info(f"Modelo salvo em {model_path}")
+
+    # Curvas de treino
+    ep = np.arange(1, len(historico["loss_train"]) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(ep, historico["loss_train"], label="Loss treino")
+    plt.plot(ep, historico["loss_val"], label="Loss validacao")
+    plt.xlabel("Epoca")
+    plt.ylabel("Loss")
+    plt.title("Siamese Torch - Evolucao da Loss (Treino vs Validacao)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reports_dir / "siamese_torch_curva_loss_treino_validacao.png")
+    plt.close()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(ep, historico["acc_val"], label="Acuracia validacao")
+    plt.plot(ep, historico["f1_val"], label="F1-macro validacao")
+    plt.xlabel("Epoca")
+    plt.ylabel("Score")
+    plt.title("Siamese Torch - Evolucao (Acuracia/F1 de Validacao)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reports_dir / "siamese_torch_curva_metricas_validacao.png")
+    plt.close()
+    _salvar_grafico_otimizacao_generico(
+        resumo_otimizacao=resumo_otimizacao,
+        reports_dir=reports_dir,
+        nome_arquivo="siamese_torch_otimizacao_trials.png",
+        titulo="Siamese Torch - F1 por Trial de Otimizacao",
+        logger=logger,
+    )
+
+    # Classificacao na validacao para report
+    artefato = carregar_checkpoint_siamese_torch(
+        model_path=model_path,
+        scaler_path=scaler_path,
+        device_cfg=cfg_sm.get("device", "cuda"),
+        logger=logger,
+    )
+    probs_val = predict_proba_siamese_torch(
+        X=X_val,
+        artefato=artefato,
+        batch_size=int(params_treino_finais.get("batch_size", 1024)),
+        temperature=float(params_treino_finais.get("temperature", 0.15)),
+    )
+    preds_val = np.argmax(probs_val, axis=1)
+
+    metrics = {
+        "modelo": "siamese_torch",
+        "hiperparametros_modelo": params_modelo_finais,
+        "hiperparametros_treino": params_treino_finais,
+        "otimizacao_hiperparametros": resumo_otimizacao,
+        "internal_validation": {
+            "accuracy": acc,
+            "f1_macro": f1,
+            "val_loss": best_val_loss,
+            "best_epoch": melhor_epoca,
+            "n_epochs_executadas": n_epochs_exec,
+        },
+        "rede_dinamica": {
+            "n_features_entrada": n_features,
+            "n_classes": n_classes,
+            "hidden_layer_sizes": [int(v) for v in params_modelo_finais["hidden_layers"]],
+            "embedding_dim": int(params_modelo_finais["embedding_dim"]),
         },
         "historico_treino": historico,
         "classification_report": classification_report(y_val_np, preds_val, output_dict=True, zero_division=0),
