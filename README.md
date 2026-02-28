@@ -206,7 +206,7 @@ Parâmetros mais críticos (referência rápida):
 | `classificacao.split_teste` | Tamanho do teste final externo | `0.10` |
 | `classificacao.augmentacao_keypoints.n_copias` | Volume de dados sintéticos de treino | `10` |
 | `classificacao.augmentacao_keypoints.noise_std_xy` | Intensidade do ruído nos keypoints | `0.004` |
-| `classificacao.rejeicao_predicao.confianca_min` | Limiar para aceitar/rejeitar predição | `0.30` |
+| `classificacao.rejeicao_predicao.confianca_min` | Limiar para aceitar/rejeitar predição | `0.50` |
 
 ---
 
