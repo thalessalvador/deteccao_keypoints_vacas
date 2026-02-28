@@ -1,18 +1,18 @@
-﻿# Projeto Vacas — Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF/SVM/MLP)
+﻿# Detecção de Vacas pelos Keypoints - Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF/SVM/MLP)
 
 ## Visão geral
 ![Desafio do projeto de identificação de vacas](Cows_challenge.png)
 
 Este repositório implementa um pipeline em 3 fases:
 
-1. **Fase 1 — Pose/Keypoints (YOLO Pose)**  
+1. **Fase 1 - Pose/Keypoints (YOLO Pose)**  
    Converte anotações do Label Studio em formato YOLO Pose, treina um modelo para detectar **bbox de vaca** e **8 keypoints**, e disponibiliza inferência (JSON e opcionalmente imagem desenhada).
 
-2. **Fase 2 — Geração de features (CSV)**  
+2. **Fase 2 - Geração de features (CSV)**  
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
-3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP/MLP-Torch)**  
+3. **Fase 3 - Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP/MLP-Torch)**  
    Treina um classificador tabular configurável via `classificacao.modelo_padrao` e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
@@ -210,7 +210,7 @@ Parâmetros mais críticos (referência rápida):
 
 ---
 
-## Fase 1 — Pose/Keypoints (YOLO)
+## Fase 1 - Pose/Keypoints (YOLO)
 
 ### Visão geral do pipeline da Fase 1
 A Fase 1 transforma anotações do Label Studio em dataset YOLO Pose, treina o modelo e publica um artefato final para inferência.
@@ -301,7 +301,7 @@ Recomendações:
 - `flipud=0.0`
 - `mosaic/mixup` moderados
 
-## Fase 2 — Geração de features (CSV)
+## Fase 2 - Geração de features (CSV)
 
 ### Visão geral do pipeline da Fase 2
 A Fase 2 transforma imagens do `dataset_classificacao` em um dataset tabular para treino da identificação.
@@ -519,7 +519,7 @@ Leitura operacional:
 - `features_completas.csv` é o insumo direto da Fase 3.
 - `imagens_descartadas.csv` explica por que uma imagem não entrou (ex.: sem instância confiável, baixa confiança média de keypoints, erro de processamento).
 
-## Fase 3 — Classificação da vaca
+## Fase 3 - Classificação da vaca
 
 ### Visão geral do pipeline da Fase 3
 A Fase 3 treina o classificador final de identificação e mede desempenho em teste externo (caso real).
@@ -756,6 +756,7 @@ Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da ú
 ## Reprodutibilidade
 - Seeds configuráveis em `config.yaml`.
 - Logs em `saidas/logs/app.log`.
+
 
 
 
