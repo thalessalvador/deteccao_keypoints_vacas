@@ -727,8 +727,7 @@ Não inclui:
 - `classificar-imagem`
 ---
 
-## Resultados alcançados (baseline atual)
-Baseline atual: `mlp_torch`.
+## Resultados alcançados (última execução)
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**
@@ -745,10 +744,12 @@ Métricas no teste final:
 - `top3_accuracy`: **0.7933**
 - `top5_accuracy`: **0.8733**
 
-Com rejeição (`confianca_min=0.30`):
-- `cobertura`: **0.9733**
-- `accuracy_aceitas`: **0.5822**
-- `f1_macro_aceitas`: **0.5849**
+Com rejeição (`confianca_min=0.50`):
+- `cobertura`: **0.7800**
+- `accuracy_aceitas`: **0.6325**
+- `f1_macro_aceitas`: **0.6267**
+
+Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
 
 ---
 

@@ -87,7 +87,7 @@ classificacao:
     # OU
     # 2) (confianca_top1 - confianca_top2) < margem_top1_top2_min
     habilitar: true
-    confianca_min: 0.30
+    confianca_min: 0.50
     margem_top1_top2_min: 0.00
     rotulo_nao_identificado: "NAO_IDENTIFICADO"
   validacao_interna:
