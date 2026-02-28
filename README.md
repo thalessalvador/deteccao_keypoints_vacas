@@ -755,23 +755,23 @@ Estas últimas, por não fazerem parte do pipeline principal, precisam ser acion
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**
-- `Box_mAP50` (média dos folds): **0.9950**
-- `Box_mAP50-95` (média dos folds): **0.9098**
-- `Pose_mAP50` (média dos folds): **0.9950**
-- `Pose_mAP50-95` (média dos folds): **0.8979**
-- `Pose_mAP50-95` (melhor fold): **0.91087** (fold 5)
+- `Box_mAP50` (média dos folds): **0.9945**
+- `Box_mAP50-95` (média dos folds): **0.8896**
+- `Pose_mAP50` (média dos folds): **0.9945**
+- `Pose_mAP50-95` (média dos folds): **0.9012**
+- `Pose_mAP50-95` (melhor fold): **0.91643** (fold 1)
 
 Métricas no teste final:
-- `accuracy`: **0.5667**
-- `f1_macro`: **0.5689**
-- `top1_accuracy`: **0.5667**
-- `top3_accuracy`: **0.7933**
+- `accuracy`: **0.6200**
+- `f1_macro`: **0.6125**
+- `top1_accuracy`: **0.6200**
+- `top3_accuracy`: **0.8133**
 - `top5_accuracy`: **0.8733**
 
 Com rejeição (`confianca_min=0.50`):
-- `cobertura`: **0.7800**
-- `accuracy_aceitas`: **0.6325**
-- `f1_macro_aceitas`: **0.6267**
+- `cobertura`: **0.9467**
+- `accuracy_aceitas`: **0.6408**
+- `f1_macro_aceitas`: **0.6246**
 
 Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
 
@@ -786,7 +786,6 @@ Uma possível melhora também poderia ser obtida, incluindo outras técnicas usa
 ## Reprodutibilidade
 - Seeds configuráveis em `config.yaml`.
 - Logs em `saidas/logs/app.log`.
-
 
 
 

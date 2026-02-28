@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, MutableMapping
 
 from ..util.io_arquivos import ler_json
 from ..util.contratos import InstanciaVacaAnotada, ImagemAnotada, KeypointPadronizado, Bbox, NomeKeypoint, LISTA_KEYPOINTS_ORDENADA
@@ -30,6 +30,81 @@ MAPA_LABEL_STUDIO = {
     "Pin down": "pin_down"
 }
 
+def _registrar_descarte(
+    estatisticas: MutableMapping[str, int],
+    motivo: str,
+    logger: logging.Logger,
+    detalhe: str,
+    anotador: Optional[str] = None,
+) -> None:
+    """
+    Registra descarte de item com contagem acumulada e log do motivo.
+
+    Parametros:
+        estatisticas (MutableMapping[str, int]): Dicionario de contadores por motivo.
+        motivo (str): Chave do motivo do descarte.
+        logger (logging.Logger): Logger para mensagem.
+        detalhe (str): Descricao do item descartado.
+        anotador (Optional[str]): Identificador do anotador responsavel.
+
+    Retorno:
+        None: Atualiza contadores e registra aviso no log.
+    """
+    estatisticas[motivo] = int(estatisticas.get(motivo, 0)) + 1
+    sufixo_anotador = f" | anotador={anotador}" if anotador else ""
+    logger.warning(f"Item descartado [{motivo}]: {detalhe}{sufixo_anotador}")
+
+
+def _extrair_identificador_anotador(item: Dict[str, Any], arquivo_json: Path) -> Optional[str]:
+    """
+    Tenta extrair um identificador de anotador do item e, como fallback, da estrutura de pastas.
+
+    Parametros:
+        item (Dict[str, Any]): Item bruto do Label Studio.
+        arquivo_json (Path): Caminho do arquivo de anotacao.
+
+    Retorno:
+        Optional[str]: Nome/id/email do anotador, quando disponivel.
+    """
+    candidatos: List[Any] = []
+    if isinstance(item, dict):
+        candidatos.extend([
+            item.get("completed_by"),
+            item.get("created_by"),
+            item.get("updated_by"),
+            item.get("annotator"),
+        ])
+        task = item.get("task")
+        if isinstance(task, dict):
+            candidatos.extend([
+                task.get("completed_by"),
+                task.get("created_by"),
+                task.get("updated_by"),
+            ])
+        annotations = item.get("annotations")
+        if isinstance(annotations, list) and annotations:
+            ann0 = annotations[0]
+            if isinstance(ann0, dict):
+                candidatos.extend([
+                    ann0.get("completed_by"),
+                    ann0.get("created_by"),
+                    ann0.get("updated_by"),
+                ])
+
+    for cand in candidatos:
+        if isinstance(cand, dict):
+            for k in ("email", "username", "first_name", "id"):
+                v = cand.get(k)
+                if v not in (None, ""):
+                    return str(v)
+        elif cand not in (None, ""):
+            return str(cand)
+
+    # Fallback para estrutura esperada: <anotador>/Key_points/<arquivo>
+    if arquivo_json.parent.name == "Key_points":
+        return arquivo_json.parent.parent.name
+    return None
+
 def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.Logger) -> List[ImagemAnotada]:
     """
     carregar_anotacoes_label_studio: Processa arquivos JSON do Label Studio exportados em formato 'Raw' ou 'JSON-MIN'.
@@ -37,22 +112,29 @@ def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.
     Ajustado para estrutura: raw/dataset_keypoints/[anotador]/Key_points/[id_sem_extensao]
     
     Args:
-        caminho_dataset_root (Path): Diretório raiz contendo as pastas dos anotadores.
+        caminho_dataset_root (Path): DiretÃ³rio raiz contendo as pastas dos anotadores.
         logger (logging.Logger): Logger.
 
     Returns:
-        List[ImagemAnotada]: Lista de objetos contendo caminho da imagem e suas anotações.
+        List[ImagemAnotada]: Lista de objetos contendo caminho da imagem e suas anotaÃ§Ãµes.
     """
     contagem_arquivos = 0
     imagens_anotadas: List[ImagemAnotada] = []
     arquivos_por_nome: Dict[str, List[Path]] = {}
+    estatisticas_descarte: Dict[str, int] = {
+        "json_invalido_ou_ilegivel": 0,
+        "sem_resultado": 0,
+        "imagem_nao_encontrada": 0,
+        "sem_bbox_anotada": 0,
+        "dimensoes_invalidas": 0,
+    }
     
     # Busca arquivos dentro de pastas chamadas "Key_points"
-    # Como não temos extensão .json garantida, vamos listar tudo dentro de Key_points
+    # Como nÃ£o temos extensÃ£o .json garantida, vamos listar tudo dentro de Key_points
     padrao_busca = "**/Key_points/*"
     arquivos_candidatos = list(caminho_dataset_root.glob(padrao_busca))
     
-    # Se não achar nada com Key_points, tenta busca genérica .json (caso mude estrutura)
+    # Se nÃ£o achar nada com Key_points, tenta busca genÃ©rica .json (caso mude estrutura)
     if not arquivos_candidatos:
         arquivos_candidatos = list(caminho_dataset_root.rglob("*.json"))
         
@@ -71,8 +153,8 @@ def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.
             dados = ler_json(arq)
             contagem_arquivos += 1
             
-            # Normalizar para lista de tasks/anotações
-            # O formato identificado é um objeto único com "task" e "result" na raiz
+            # Normalizar para lista de tasks/anotaÃ§Ãµes
+            # O formato identificado Ã© um objeto Ãºnico com "task" e "result" na raiz
             lista_para_processar = []
             if isinstance(dados, dict):
                 lista_para_processar.append(dados)
@@ -80,13 +162,20 @@ def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.
                 lista_para_processar.extend(dados)
                 
             for item in lista_para_processar:
-                img_anotada = _processar_item_label_studio(item, arq, caminho_dataset_root, logger, arquivos_por_nome)
+                img_anotada = _processar_item_label_studio(
+                    item=item,
+                    arquivo_json=arq,
+                    root_dir=caminho_dataset_root,
+                    logger=logger,
+                    arquivos_por_nome=arquivos_por_nome,
+                    estatisticas_descarte=estatisticas_descarte,
+                )
                 if img_anotada:
                     # Contagem para log de resumo
                     n_vacas = len(img_anotada["instancias"])
                     n_kps_total = 0
                     for inst in img_anotada["instancias"]:
-                        # Conta apenas KPs válidos (v > 0)
+                        # Conta apenas KPs vÃ¡lidos (v > 0)
                         n_kps_inst = sum(1 for k in inst["keypoints"] if k["v"] > 0)
                         n_kps_total += n_kps_inst
                     
@@ -95,11 +184,22 @@ def carregar_anotacoes_label_studio(caminho_dataset_root: Path, logger: logging.
                     imagens_anotadas.append(img_anotada)
                     
         except Exception as e:
-            # Logger debug para não poluir se for arquivo de sistema
-            logger.debug(f"Falha ao ler/processar arquivo {arq}: {e}")
+            _registrar_descarte(
+                estatisticas=estatisticas_descarte,
+                motivo="json_invalido_ou_ilegivel",
+                logger=logger,
+                detalhe=f"{arq} | erro={e}",
+                anotador=_extrair_identificador_anotador({}, arq),
+            )
             continue
 
     logger.info(f"Total de imagens carregadas com sucesso: {len(imagens_anotadas)}")
+    total_descartadas = int(sum(estatisticas_descarte.values()))
+    if total_descartadas > 0:
+        resumo = ", ".join([f"{k}={v}" for k, v in estatisticas_descarte.items() if int(v) > 0])
+        logger.warning(
+            f"Resumo de descartes na leitura do Label Studio: total={total_descartadas} | {resumo}"
+        )
     return imagens_anotadas
 
 def _processar_item_label_studio(
@@ -107,7 +207,8 @@ def _processar_item_label_studio(
     arquivo_json: Path,
     root_dir: Path,
     logger: logging.Logger,
-    arquivos_por_nome: Optional[Dict[str, List[Path]]] = None
+    arquivos_por_nome: Optional[Dict[str, List[Path]]] = None,
+    estatisticas_descarte: Optional[MutableMapping[str, int]] = None
 ) -> Optional[ImagemAnotada]:
     """
     Processa um item de anotacao do Label Studio para o contrato interno.
@@ -118,11 +219,16 @@ def _processar_item_label_studio(
         root_dir (Path): Diretorio raiz para resolver caminhos de imagem.
         logger (logging.Logger): Logger para avisos e erros.
         arquivos_por_nome (Optional[Dict[str, List[Path]]]): Indice opcional de imagens por nome.
+        estatisticas_descarte (Optional[MutableMapping[str, int]]): Contadores de descarte por motivo.
 
     Retorno:
         Optional[ImagemAnotada]: Estrutura normalizada ou None quando o item e invalido.
     """
-    # Identificar onde estão os resultados e o caminho da imagem
+    if estatisticas_descarte is None:
+        estatisticas_descarte = {}
+    anotador_item = _extrair_identificador_anotador(item, arquivo_json)
+
+    # Identificar onde estÃ£o os resultados e o caminho da imagem
     results = []
     img_path_raw = ""
     
@@ -140,12 +246,19 @@ def _processar_item_label_studio(
         img_path_raw = img_data.get("img") or img_data.get("image") or ""
         
     if not results:
+        _registrar_descarte(
+            estatisticas=estatisticas_descarte,
+            motivo="sem_resultado",
+            logger=logger,
+            detalhe=f"{arquivo_json.name}",
+            anotador=anotador_item,
+        )
         return None
         
     # Extrair nome da imagem
     nome_imagem_referencia = ""
     if img_path_raw:
-        # Decodificar URL se necessário (ex: %20 -> espaço)
+        # Decodificar URL se necessÃ¡rio (ex: %20 -> espaÃ§o)
         import urllib.parse
         decoded_path = urllib.parse.unquote(img_path_raw)
         # Pegar apenas o nome do arquivo, ignorando caminhos falsos do LS (/data/local-files/...)
@@ -182,8 +295,14 @@ def _processar_item_label_studio(
             break
 
     if not caminho_imagem_final:
-        # Se não achou a imagem, não podemos usar
-        # logger.warning(f"Imagem não encontrada para JSON {arquivo_json.name}. Ref: {nome_imagem_referencia}")
+        ref = nome_imagem_referencia if nome_imagem_referencia else arquivo_json.name
+        _registrar_descarte(
+            estatisticas=estatisticas_descarte,
+            motivo="imagem_nao_encontrada",
+            logger=logger,
+            detalhe=ref,
+            anotador=anotador_item,
+        )
         return None
 
     # Extrair Dados
@@ -238,10 +357,24 @@ def _processar_item_label_studio(
 
     if not bboxes:
         ref_img = caminho_imagem_final.name if caminho_imagem_final else (nome_imagem_referencia or arquivo_json.name)
-        logger.warning(f"Imagem sem bbox anotada. Pulando item: {ref_img}")
+        _registrar_descarte(
+            estatisticas=estatisticas_descarte,
+            motivo="sem_bbox_anotada",
+            logger=logger,
+            detalhe=ref_img,
+            anotador=anotador_item,
+        )
         return None
 
     if img_width == 0 or img_height == 0:
+        ref_img = caminho_imagem_final.name if caminho_imagem_final else (nome_imagem_referencia or arquivo_json.name)
+        _registrar_descarte(
+            estatisticas=estatisticas_descarte,
+            motivo="dimensoes_invalidas",
+            logger=logger,
+            detalhe=ref_img,
+            anotador=anotador_item,
+        )
         return None
 
     instancias = []
@@ -337,15 +470,15 @@ def _normalizar_nome_keypoint(raw: str) -> Optional[NomeKeypoint]:
     """
     _normalizar_nome_keypoint: Normaliza o nome do keypoint vindo do Label Studio.
 
-    Mapeia variações de nomes (ex: "Hook up", "Hook_Up") para o identificador interno padronizado
-    definido em contratos.py. Utiliza um mapa de conversão explícito e estratégias de normalização
+    Mapeia variaÃ§Ãµes de nomes (ex: "Hook up", "Hook_Up") para o identificador interno padronizado
+    definido em contratos.py. Utiliza um mapa de conversÃ£o explÃ­cito e estratÃ©gias de normalizaÃ§Ã£o
     de string (lowercase, replace).
 
     Args:
         raw (str): Nome cru do keypoint vindo do Label Studio.
 
     Returns:
-        Optional[NomeKeypoint]: Nome normalizado ou None se não reconhecido.
+        Optional[NomeKeypoint]: Nome normalizado ou None se nÃ£o reconhecido.
     """
     if raw in MAPA_LABEL_STUDIO:
         return MAPA_LABEL_STUDIO[raw]
