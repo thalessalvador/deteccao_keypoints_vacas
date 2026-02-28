@@ -47,8 +47,8 @@ pose:
     erasing: 0.2 # Probabilidade de apagamento aleatorio (random erasing)
 
 classificacao:
-  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp"
-  modelo_padrao: "mlp"
+  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp", "mlp_torch"
+  modelo_padrao: "mlp_torch"
   split_teste: 0.10 # Percentual de teste externo (caso real) por vaca
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
@@ -152,6 +152,20 @@ classificacao:
     validation_fraction: 0.1 # Fracao interna usada pelo proprio MLP para early stopping
     n_iter_no_change: 30 # Paciência do early stopping interno do MLP
     random_state: 42 # Semente para reprodutibilidade
+  # Hiperparametros base do MLP em PyTorch (GPU por padrao quando disponivel)
+  mlp_torch:
+    device: "cuda" # "cuda", "cpu", "0", "1", etc.
+    hidden_layer_sizes: [256, 128] # Camadas ocultas base (dinamicas em runtime)
+    activation: "relu" # "relu", "gelu", "elu", "leaky_relu"
+    dropout: 0.10 # Dropout entre camadas ocultas
+    learning_rate: 0.001 # Taxa de aprendizado (AdamW)
+    weight_decay: 0.0001 # Regularizacao L2 (weight decay)
+    batch_size: 64 # Tamanho do mini-lote de treino/inferencia
+    max_epochs: 300 # Maximo de epocas por treino
+    patience: 30 # Paciencia do early stopping pela metrica escolhida
+    min_delta: 0.0 # Melhora minima de F1 para resetar a paciencia
+    early_stop_metric: "f1_macro" # "f1_macro", "val_loss" ou "accuracy"
+    seed: 42 # Semente para reproducao
   # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest/SVM/MLP (menos forca bruta que busca em grade).
   # metodo:
   # - "optuna": TPE/Bayesiano (preferencial, requer optuna instalado)

@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, log_loss
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
@@ -19,6 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from ..util.io_arquivos import garantir_diretorio
+from .mlp_torch import MLPDinamicoTorch, resolver_device_torch, salvar_checkpoint_mlp_torch
 
 def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Path:
     """
@@ -141,6 +144,8 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
         return _treinar_svm(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     elif model_type == "mlp":
         return _treinar_mlp(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
+    elif model_type == "mlp_torch":
+        return _treinar_mlp_torch(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     else:
         logger.warning(f"Modelo {model_type} desconhecido. Usando XGBoost.")
         return _treinar_xgboost(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, feature_cols, aug_stats, logger)
@@ -1910,6 +1915,510 @@ def _treinar_mlp(
     }
     with open(reports_dir / "metricas_classificacao_treino.json", 'w', encoding='utf-8') as f:
         json.dump(metrics, f, indent=2)
+    return model_path
+
+
+def _treinar_uma_config_mlp_torch(
+    X_train_np: np.ndarray,
+    y_train_np: np.ndarray,
+    X_val_np: np.ndarray,
+    y_val_np: np.ndarray,
+    params_modelo: Dict[str, Any],
+    params_treino: Dict[str, Any],
+    device: torch.device,
+    seed: int,
+) -> Dict[str, Any]:
+    """
+    Treina uma configuracao de MLP Torch com early stopping por F1-macro.
+
+    Parametros:
+        X_train_np (np.ndarray): Features de treino ja escaladas.
+        y_train_np (np.ndarray): Rotulos de treino.
+        X_val_np (np.ndarray): Features de validacao ja escaladas.
+        y_val_np (np.ndarray): Rotulos de validacao.
+        params_modelo (Dict[str, Any]): Parametros de arquitetura da rede.
+        params_treino (Dict[str, Any]): Parametros de otimizacao e parada.
+        device (torch.device): Dispositivo de execucao.
+        seed (int): Semente para reproducao.
+
+    Retorno:
+        Dict[str, Any]: Resultado com melhor modelo, historico e metricas.
+    """
+    torch.manual_seed(int(seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(seed))
+
+    model = MLPDinamicoTorch(
+        input_dim=int(params_modelo["input_dim"]),
+        num_classes=int(params_modelo["num_classes"]),
+        hidden_layers=[int(v) for v in params_modelo["hidden_layers"]],
+        activation=str(params_modelo.get("activation", "relu")),
+        dropout=float(params_modelo.get("dropout", 0.0)),
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(params_treino["lr"]),
+        weight_decay=float(params_treino["weight_decay"]),
+    )
+
+    X_train_t = torch.from_numpy(X_train_np).float()
+    y_train_t = torch.from_numpy(y_train_np).long()
+    X_val_t = torch.from_numpy(X_val_np).float().to(device)
+    y_val_t = torch.from_numpy(y_val_np).long().to(device)
+
+    batch_size = int(params_treino["batch_size"])
+    max_epochs = int(params_treino["max_epochs"])
+    paciencia = int(params_treino["patience"])
+    min_delta = float(params_treino.get("min_delta", 0.0))
+
+    historico = {
+        "loss_train": [],
+        "loss_val": [],
+        "acc_train": [],
+        "acc_val": [],
+        "f1_val": [],
+    }
+
+    monitor_metric = str(params_treino.get("early_stop_metric", "f1_macro")).lower()
+    if monitor_metric not in ("f1_macro", "val_loss", "accuracy"):
+        monitor_metric = "f1_macro"
+
+    melhor_f1 = -1.0
+    melhor_loss_val = float("inf")
+    melhor_acc_monitor = -1.0
+    melhor_acc = 0.0
+    melhor_epoca = 0
+    melhor_state = None
+    sem_melhora = 0
+
+    for epoca in range(1, max_epochs + 1):
+        model.train()
+        perm = torch.randperm(X_train_t.size(0))
+        total_loss = 0.0
+        total_n = 0
+
+        for ini in range(0, X_train_t.size(0), batch_size):
+            fim = min(ini + batch_size, X_train_t.size(0))
+            idx = perm[ini:fim]
+            xb = X_train_t[idx].to(device)
+            yb = y_train_t[idx].to(device)
+
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            optimizer.step()
+
+            n_b = int(yb.size(0))
+            total_loss += float(loss.item()) * n_b
+            total_n += n_b
+
+        model.eval()
+        with torch.no_grad():
+            logits_train = model(X_train_t.to(device))
+            logits_val = model(X_val_t)
+            probs_train = torch.softmax(logits_train, dim=1).cpu().numpy()
+            probs_val = torch.softmax(logits_val, dim=1).cpu().numpy()
+            pred_train = np.argmax(probs_train, axis=1)
+            pred_val = np.argmax(probs_val, axis=1)
+            loss_val = float(criterion(logits_val, y_val_t).item())
+
+        loss_train = float(total_loss / max(total_n, 1))
+        acc_train = float(accuracy_score(y_train_np, pred_train))
+        acc_val = float(accuracy_score(y_val_np, pred_val))
+        f1_val = float(f1_score(y_val_np, pred_val, average="macro", zero_division=0))
+
+        historico["loss_train"].append(loss_train)
+        historico["loss_val"].append(loss_val)
+        historico["acc_train"].append(acc_train)
+        historico["acc_val"].append(acc_val)
+        historico["f1_val"].append(f1_val)
+
+        houve_melhora = False
+        if monitor_metric == "val_loss":
+            if loss_val < (melhor_loss_val - min_delta):
+                melhor_loss_val = loss_val
+                melhor_f1 = f1_val
+                melhor_acc_monitor = acc_val
+                melhor_acc = acc_val
+                melhor_epoca = epoca
+                melhor_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                houve_melhora = True
+        elif monitor_metric == "accuracy":
+            if acc_val > (melhor_acc_monitor + min_delta):
+                melhor_loss_val = loss_val
+                melhor_f1 = f1_val
+                melhor_acc_monitor = acc_val
+                melhor_acc = acc_val
+                melhor_epoca = epoca
+                melhor_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                houve_melhora = True
+        else:
+            if f1_val > (melhor_f1 + min_delta):
+                melhor_loss_val = loss_val
+                melhor_f1 = f1_val
+                melhor_acc_monitor = acc_val
+                melhor_acc = acc_val
+                melhor_epoca = epoca
+                melhor_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                houve_melhora = True
+
+        if houve_melhora:
+            sem_melhora = 0
+        else:
+            sem_melhora += 1
+
+        if sem_melhora >= paciencia:
+            break
+
+    if melhor_state is not None:
+        model.load_state_dict(melhor_state)
+
+    return {
+        "model": model,
+        "best_f1": float(melhor_f1),
+        "best_val_loss": float(melhor_loss_val),
+        "best_acc": float(melhor_acc),
+        "best_epoch": int(melhor_epoca),
+        "early_stop_metric": monitor_metric,
+        "historico": historico,
+    }
+
+
+def _treinar_mlp_torch(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """
+    Treina MLP em PyTorch com arquitetura dinamica e otimizacao por Optuna/random.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos codificados.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes de classificacao.
+        models_dir (Path): Diretorio de saida de modelos.
+        reports_dir (Path): Diretorio de saida de relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do checkpoint salvo.
+    """
+    logger.info("Treinando MLP Torch...")
+    cfg_mlp = config_cls.get("mlp_torch", {})
+    seed = int(cfg_mlp.get("seed", 42))
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    device_cfg = cfg_mlp.get("device", config_cls.get("device", "cuda"))
+    device = resolver_device_torch(device_cfg, logger=logger)
+    logger.info(f"MLP Torch em dispositivo: {device}")
+
+    X_train, X_val, y_train, y_val = _preparar_split_interno_com_grupos(
+        X=X,
+        y=y,
+        groups=groups,
+        origem_instancia=origem_instancia,
+        config_cls=config_cls,
+        logger=logger,
+    )
+
+    scaler = StandardScaler()
+    X_train_np = scaler.fit_transform(X_train).astype(np.float32)
+    X_val_np = scaler.transform(X_val).astype(np.float32)
+    y_train_np = y_train.astype(np.int64)
+    y_val_np = y_val.astype(np.int64)
+
+    n_features = int(X_train_np.shape[1])
+    n_classes = int(len(np.unique(y_train_np)))
+
+    hidden_base = cfg_mlp.get("hidden_layer_sizes", [128, 64])
+    if isinstance(hidden_base, list):
+        hidden_base = [int(v) for v in hidden_base]
+    else:
+        hidden_base = [128, 64]
+
+    params_modelo_base = {
+        "input_dim": n_features,
+        "num_classes": n_classes,
+        "hidden_layers": hidden_base,
+        "activation": str(cfg_mlp.get("activation", "relu")),
+        "dropout": float(cfg_mlp.get("dropout", 0.1)),
+    }
+    params_treino_base = {
+        "lr": float(cfg_mlp.get("learning_rate", 1e-3)),
+        "weight_decay": float(cfg_mlp.get("weight_decay", 1e-4)),
+        "batch_size": int(cfg_mlp.get("batch_size", 64)),
+        "max_epochs": int(cfg_mlp.get("max_epochs", 300)),
+        "patience": int(cfg_mlp.get("patience", 30)),
+        "min_delta": float(cfg_mlp.get("min_delta", 0.0)),
+        "early_stop_metric": str(cfg_mlp.get("early_stop_metric", "f1_macro")),
+    }
+
+    params_modelo_finais = dict(params_modelo_base)
+    params_treino_finais = dict(params_treino_base)
+
+    cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
+    resumo_otimizacao: Optional[Dict[str, Any]] = None
+    if bool(cfg_otimizacao.get("habilitar", False)):
+        metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
+        n_trials = int(cfg_otimizacao.get("n_trials", 40))
+        timeout_segundos = cfg_otimizacao.get("timeout_segundos")
+        historico_trials: List[Dict[str, Any]] = []
+
+        def _avaliar_trial(params_modelo_trial: Dict[str, Any], params_treino_trial: Dict[str, Any]) -> float:
+            resultado = _treinar_uma_config_mlp_torch(
+                X_train_np=X_train_np,
+                y_train_np=y_train_np,
+                X_val_np=X_val_np,
+                y_val_np=y_val_np,
+                params_modelo=params_modelo_trial,
+                params_treino=params_treino_trial,
+                device=device,
+                seed=seed,
+            )
+            return float(resultado["best_f1"])
+
+        if metodo == "optuna":
+            try:
+                import optuna  # type: ignore
+
+                logger.info(f"Iniciando otimização de hiperparâmetros MLP Torch com Optuna ({n_trials} trials)...")
+                sampler = optuna.samplers.TPESampler(seed=seed)
+                estudo = optuna.create_study(direction="maximize", sampler=sampler)
+
+                def objetivo(trial: Any) -> float:
+                    n_layers = trial.suggest_int("n_layers", 1, 3)
+                    layer_choices = [64, 128, 256, 512]
+                    hidden = [trial.suggest_categorical(f"hidden_{i}", layer_choices) for i in range(n_layers)]
+                    activation = trial.suggest_categorical("activation", ["relu", "gelu", "elu", "leaky_relu"])
+                    dropout = trial.suggest_float("dropout", 0.0, 0.4)
+                    lr = trial.suggest_float("lr", 1e-4, 5e-3, log=True)
+                    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+                    batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+
+                    params_modelo_trial = dict(params_modelo_base)
+                    params_modelo_trial.update(
+                        {"hidden_layers": hidden, "activation": activation, "dropout": float(dropout)}
+                    )
+                    params_treino_trial = dict(params_treino_base)
+                    params_treino_trial.update(
+                        {"lr": float(lr), "weight_decay": float(weight_decay), "batch_size": int(batch_size)}
+                    )
+                    return _avaliar_trial(params_modelo_trial, params_treino_trial)
+
+                estudo.optimize(
+                    objetivo,
+                    n_trials=n_trials,
+                    timeout=(int(timeout_segundos) if timeout_segundos else None),
+                    show_progress_bar=False,
+                )
+
+                best = estudo.best_trial.params
+                n_layers_best = int(best.get("n_layers", 1))
+                hidden_best = [int(best[f"hidden_{i}"]) for i in range(n_layers_best)]
+                params_modelo_finais.update(
+                    {
+                        "hidden_layers": hidden_best,
+                        "activation": str(best.get("activation", params_modelo_base["activation"])),
+                        "dropout": float(best.get("dropout", params_modelo_base["dropout"])),
+                    }
+                )
+                params_treino_finais.update(
+                    {
+                        "lr": float(best.get("lr", params_treino_base["lr"])),
+                        "weight_decay": float(best.get("weight_decay", params_treino_base["weight_decay"])),
+                        "batch_size": int(best.get("batch_size", params_treino_base["batch_size"])),
+                    }
+                )
+                resumo_otimizacao = {
+                    "habilitado": True,
+                    "metodo_solicitado": metodo,
+                    "metodo_executado": "optuna",
+                    "n_trials_solicitados": n_trials,
+                    "n_trials_executados": len(estudo.trials),
+                    "melhor_f1_macro": float(estudo.best_value),
+                    "historico_trials": [
+                        {"trial": int(t.number) + 1, "value": (None if t.value is None else float(t.value))}
+                        for t in estudo.trials
+                    ],
+                }
+            except Exception as exc:
+                logger.warning(f"Falha ao usar Optuna para MLP Torch ({exc}). Fallback para random search.")
+                metodo = "random"
+
+        if metodo != "optuna":
+            logger.info(f"Iniciando otimização MLP Torch com random search ({n_trials} trials)...")
+            gerador = np.random.default_rng(seed)
+            melhor_score = -1.0
+            melhor_modelo_cfg: Dict[str, Any] = {}
+            melhor_treino_cfg: Dict[str, Any] = {}
+            layer_choices = [64, 128, 256, 512]
+            activations = ["relu", "gelu", "elu", "leaky_relu"]
+            batch_choices = [32, 64, 128]
+            for _ in range(n_trials):
+                n_layers = int(gerador.integers(1, 4))
+                hidden = [layer_choices[int(gerador.integers(0, len(layer_choices)))] for _ in range(n_layers)]
+                params_modelo_trial = dict(params_modelo_base)
+                params_modelo_trial.update(
+                    {
+                        "hidden_layers": hidden,
+                        "activation": activations[int(gerador.integers(0, len(activations)))],
+                        "dropout": float(gerador.uniform(0.0, 0.4)),
+                    }
+                )
+                params_treino_trial = dict(params_treino_base)
+                params_treino_trial.update(
+                    {
+                        "lr": float(np.exp(gerador.uniform(np.log(1e-4), np.log(5e-3)))),
+                        "weight_decay": float(np.exp(gerador.uniform(np.log(1e-6), np.log(1e-2)))),
+                        "batch_size": int(batch_choices[int(gerador.integers(0, len(batch_choices)))]),
+                    }
+                )
+                score = _avaliar_trial(params_modelo_trial, params_treino_trial)
+                historico_trials.append({"trial": len(historico_trials) + 1, "value": float(score)})
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_modelo_cfg = params_modelo_trial
+                    melhor_treino_cfg = params_treino_trial
+
+            params_modelo_finais.update(melhor_modelo_cfg)
+            params_treino_finais.update(melhor_treino_cfg)
+            resumo_otimizacao = {
+                "habilitado": True,
+                "metodo_solicitado": str(cfg_otimizacao.get("metodo", "random")),
+                "metodo_executado": "random_search",
+                "n_trials_solicitados": n_trials,
+                "n_trials_executados": n_trials,
+                "melhor_f1_macro": float(melhor_score),
+                "historico_trials": historico_trials,
+            }
+
+    resultado_final = _treinar_uma_config_mlp_torch(
+        X_train_np=X_train_np,
+        y_train_np=y_train_np,
+        X_val_np=X_val_np,
+        y_val_np=y_val_np,
+        params_modelo=params_modelo_finais,
+        params_treino=params_treino_finais,
+        device=device,
+        seed=seed,
+    )
+    model_final: MLPDinamicoTorch = resultado_final["model"]
+    acc = float(resultado_final["best_acc"])
+    f1 = float(resultado_final["best_f1"])
+    best_val_loss = float(resultado_final["best_val_loss"])
+    melhor_epoca = int(resultado_final["best_epoch"])
+    early_stop_metric = str(resultado_final["early_stop_metric"])
+    historico = resultado_final["historico"]
+
+    arquitetura = [params_modelo_finais["input_dim"]] + list(params_modelo_finais["hidden_layers"]) + [params_modelo_finais["num_classes"]]
+    total_parametros = int(sum(p.numel() for p in model_final.parameters()))
+    logger.info(
+        "MLP Torch Summary -> arquitetura=%s | ativacao=%s | dropout=%.3f | lr=%.6f | wd=%.6f | batch=%d | max_epochs=%d | best_epoch=%d | early_stop_metric=%s | params=%d",
+        arquitetura,
+        str(params_modelo_finais.get("activation", "relu")),
+        float(params_modelo_finais.get("dropout", 0.0)),
+        float(params_treino_finais["lr"]),
+        float(params_treino_finais["weight_decay"]),
+        int(params_treino_finais["batch_size"]),
+        int(params_treino_finais["max_epochs"]),
+        int(melhor_epoca),
+        early_stop_metric,
+        total_parametros,
+    )
+    logger.info(f"MLP Torch Validação Interna - Acurácia: {acc:.4f}, F1-Macro: {f1:.4f}")
+
+    model_path = models_dir / "mlp_torch_model.pt"
+    scaler_path = models_dir / "mlp_torch_scaler.joblib"
+    salvar_checkpoint_mlp_torch(
+        model_path=model_path,
+        scaler_path=scaler_path,
+        model=model_final,
+        scaler=scaler,
+        metadata={
+            "input_dim": int(params_modelo_finais["input_dim"]),
+            "num_classes": int(params_modelo_finais["num_classes"]),
+            "hidden_layers": [int(v) for v in params_modelo_finais["hidden_layers"]],
+            "activation": str(params_modelo_finais.get("activation", "relu")),
+            "dropout": float(params_modelo_finais.get("dropout", 0.0)),
+            "device_treino": str(device),
+        },
+    )
+    joblib.dump(list(X.columns), models_dir / "feature_names.pkl")
+    logger.info(f"Modelo salvo em {model_path}")
+
+    _salvar_grafico_otimizacao_generico(
+        resumo_otimizacao=resumo_otimizacao,
+        reports_dir=reports_dir,
+        nome_arquivo="mlp_torch_otimizacao_trials.png",
+        titulo="MLP Torch - Evolucao dos Trials de Otimizacao",
+        logger=logger,
+    )
+
+    ep = np.arange(1, len(historico["loss_train"]) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(ep, historico["loss_train"], label="Loss treino")
+    plt.plot(ep, historico["loss_val"], label="Loss validacao")
+    plt.xlabel("Epoca")
+    plt.ylabel("Loss")
+    plt.title("MLP Torch - Evolucao da Loss (Treino vs Validacao)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reports_dir / "mlp_torch_curva_loss_treino_validacao.png")
+    plt.close()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(ep, historico["acc_train"], label="Acuracia treino")
+    plt.plot(ep, historico["acc_val"], label="Acuracia validacao")
+    plt.xlabel("Epoca")
+    plt.ylabel("Acuracia")
+    plt.title("MLP Torch - Evolucao da Acuracia (Treino vs Validacao)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reports_dir / "mlp_torch_curva_acuracia_treino_validacao.png")
+    plt.close()
+
+    with torch.no_grad():
+        X_val_t = torch.from_numpy(X_val_np).float().to(device)
+        probs_val = torch.softmax(model_final(X_val_t), dim=1).cpu().numpy()
+    preds_val = np.argmax(probs_val, axis=1)
+
+    metrics = {
+        "modelo": "mlp_torch",
+        "hiperparametros_modelo": params_modelo_finais,
+        "hiperparametros_treino": params_treino_finais,
+        "otimizacao_hiperparametros": resumo_otimizacao,
+        "internal_validation": {
+            "accuracy": acc,
+            "f1_macro": f1,
+            "val_loss": best_val_loss,
+            "best_epoch": melhor_epoca,
+            "n_epochs_executadas": int(len(historico["loss_train"])),
+            "early_stop_metric": early_stop_metric,
+        },
+        "rede_dinamica": {
+            "n_features_entrada": n_features,
+            "n_classes": n_classes,
+            "hidden_layer_sizes": [int(v) for v in params_modelo_finais["hidden_layers"]],
+        },
+        "historico_treino": historico,
+        "classification_report": classification_report(y_val_np, preds_val, output_dict=True, zero_division=0),
+    }
+    with open(reports_dir / "metricas_classificacao_treino.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
     return model_path
 
 

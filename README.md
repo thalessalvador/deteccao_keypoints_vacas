@@ -12,7 +12,7 @@ Este repositório implementa um pipeline em 3 fases:
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
-3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP)**  
+3. **Fase 3 — Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP/MLP-Torch)**  
    Treina um classificador tabular configurável via `classificacao.modelo_padrao` e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
@@ -24,9 +24,13 @@ Este repositório implementa um pipeline em 3 fases:
   - opencv-python
   - numpy, pandas
   - scikit-learn
-  - matplotlib
+  - matplotlib, seaborn
   - pyyaml
   - xgboost / catboost (classificação tabular)
+  - optuna (otimização de hiperparâmetros)
+  - pydantic (validação de contratos/configuração)
+  - tqdm (barra de progresso)
+  - types-PyYAML (tipagem estática para YAML)
 - GPU NVIDIA (opcional, recomendado): qualquer RTX com CUDA compatível.
 
 ---
@@ -90,6 +94,15 @@ src/
 config/
 ```
 
+Pastas auxiliares/geradas em execução:
+```text
+.venv/          # ambiente virtual local
+build/          # artefatos de build/empacotamento
+catboost_info/  # logs e artefatos temporários do CatBoost
+_experimentos/  # execuções/rascunhos experimentais locais
+_logs/          # logs auxiliares locais
+```
+
 ---
 
 ## Formato dos datasets
@@ -137,6 +150,9 @@ dados/raw/dataset_classificacao/
 
 ## Formato YOLO Pose gerado
 - Saída: `dados/processados/yolo_pose/images` e `labels`.
+- O arquivo `dados/processados/yolo_pose/dataset.yaml` inclui `kpt_shape: [8, 3]`, que define:
+  - `8` keypoints por vaca;
+  - `3` valores por keypoint no label: `x`, `y`, `v` (visibilidade).
 - Uma linha por vaca/instância:
 ```text
 0 xc yc w h k1x k1y k1v ... k8x k8y k8v
@@ -149,21 +165,189 @@ dados/raw/dataset_classificacao/
 ## Configuração
 Edite `config/config.yaml`.
 
-Principais parâmetros:
-- `pose.model_name` (atual: `yolo26n-pose.pt`)
-- `pose.imgsz`, `pose.batch`, `pose.epochs`, `pose.device`
-- `pose.k_folds`, `pose.estrategia_validacao`
-- `pose.usar_data_augmentation` e `pose.augmentacao`
-- `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm` ou `mlp`)
-- `classificacao.features.selecionadas`
-- `classificacao.usar_data_augmentation`, `classificacao.augmentacao_keypoints`
-- `classificacao.filtro_confianca_pose` (gate de qualidade da pose antes de gerar/classificar features)
-- `classificacao.rejeicao_predicao` (gatilho de `NAO_IDENTIFICADO` por confiança top-1 e margem top1-top2)
-- `classificacao.validacao_interna.usar_apenas_real` (validação interna só com instâncias reais)
+Principais parâmetros (resumo prático):
+
+- `paths.raw`, `paths.processed`, `paths.models`, `paths.outputs`: diretórios base de entrada, dados processados, modelos e saídas.
+
+- `pose.model_name`: checkpoint inicial do YOLO Pose (ex.: `yolo26n-pose.pt`, `yolov8n-pose.pt`).
+- `pose.imgsz`: resolução de treino/inferência da fase de pose.
+- `pose.batch`: tamanho de lote do YOLO.
+- `pose.epochs`: número máximo de épocas.
+- `pose.patience`: early stopping da fase de pose (épocas sem melhora).
+- `pose.device`: dispositivo (`"cpu"`, `"0"`, `"1"`, etc.).
+- `pose.k_folds`: quantidade de folds na validação cruzada da pose.
+- `pose.estrategia_validacao`: estratégia de split da pose (`kfold_misturado`, `groupkfold_por_sessao`, `groupkfold_por_anotador`).
+- `pose.usar_data_augmentation`: liga/desliga augmentations do YOLO.
+- `pose.augmentacao.*`: intensidades/probabilidades dos augmentations nativos (`hsv_*`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `fliplr`, `flipud`, `mosaic`, `mixup`, `erasing`).
+
+- `classificacao.modelo_padrao`: classificador tabular ativo (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch`).
+- `classificacao.split_teste`: fração reservada para teste final externo por vaca (ex.: `0.10`).
+- `classificacao.features.selecionadas`: lista de features geométricas usadas no treino da classificação.
+- `classificacao.usar_data_augmentation`: liga/desliga augmentation da fase de features/classificação.
+- `classificacao.augmentacao_keypoints.*`: parâmetros da geração sintética via ruído gaussiano (`n_copias`, `noise_std_xy`, `conf_min_keypoint`, etc.).
+- `classificacao.selecao_instancia.*`: critérios para escolher a vaca-alvo quando há múltiplas detecções (`conf_min`, pesos por área/confiança e centralidade).
+- `classificacao.filtro_confianca_pose.*`: gate de qualidade da pose antes de gerar/classificar features (baseado na confiança média dos keypoints visíveis).
+- `classificacao.rejeicao_predicao.*`: regra para retornar `NAO_IDENTIFICADO` na inferência (limiar de confiança top-1 e margem top1-top2).
+- `classificacao.validacao_interna.fracao`: tamanho da validação interna dentro do treino externo.
+- `classificacao.validacao_interna.early_stopping_rounds`: paciência de early stopping para modelos que suportam esse mecanismo.
+- `classificacao.validacao_interna.usar_apenas_real`: força validação interna com amostras reais (sem augmentação), reduzindo viés de cópias sintéticas.
+- `classificacao.otimizacao_hiperparametros.*`: ativa Optuna/busca aleatória e controla `n_trials`, `timeout` e `seed`.
+
+Parâmetros mais críticos (referência rápida):
+
+| Parâmetro | Impacto prático | Valor inicial recomendado |
+|---|---|---|
+| `pose.model_name` | Define capacidade/velocidade do detector de pose | `yolo26n-pose.pt` |
+| `pose.device` | Define uso de GPU/CPU na fase de pose | `"0"` (GPU principal) |
+| `pose.batch` | Afeta uso de VRAM e tempo por época | `16` (reduzir se faltar VRAM) |
+| `pose.epochs` | Limite de treino da pose | `200` |
+| `pose.patience` | Early stopping da pose | `50` |
+| `classificacao.modelo_padrao` | Escolhe o classificador final | `"mlp_torch"` (baseline atual) |
+| `classificacao.split_teste` | Tamanho do teste final externo | `0.10` |
+| `classificacao.augmentacao_keypoints.n_copias` | Volume de dados sintéticos de treino | `10` |
+| `classificacao.augmentacao_keypoints.noise_std_xy` | Intensidade do ruído nos keypoints | `0.004` |
+| `classificacao.rejeicao_predicao.confianca_min` | Limiar para aceitar/rejeitar predição | `0.30` |
 
 ---
 
-## Detalhes das Features Geométricas (Fase 2)
+## Fase 1 — Pose/Keypoints (YOLO)
+
+### Visão geral do pipeline da Fase 1
+A Fase 1 transforma anotações do Label Studio em dataset YOLO Pose, treina o modelo e publica um artefato final para inferência.
+
+Fluxo completo:
+1. **Entrada bruta:** imagens + anotações em `dados/raw/dataset_keypoints`.
+2. **Pré-processamento (`preprocessar-pose`):**
+   - parse das anotações;
+   - associação bbox/keypoints por instância;
+   - geração de `dados/processados/yolo_pose/images` e `dados/processados/yolo_pose/labels`;
+   - geração de `dados/processados/yolo_pose/dataset.yaml`.
+3. **Treino (`treinar-pose`):**
+   - lê `pose.estrategia_validacao` e `pose.k_folds`;
+   - cria os splits por fold (k-fold ou group k-fold);
+   - treina YOLO Pose em cada fold com os parâmetros de `pose.*`.
+4. **Validação por fold:**
+   - calcula métricas de detecção e pose por fold;
+   - registra resultados para agregação final.
+5. **Consolidação final:**
+   - escolhe/salva o melhor checkpoint para uso posterior;
+   - exporta métricas consolidadas no relatório da fase.
+6. **Inferência (`inferir-pose`):**
+   - usa o checkpoint final da fase;
+   - retorna bbox + 8 keypoints por vaca em JSON e, opcionalmente, imagem desenhada.
+
+### Estratégias de validação e splits (k-fold/group k-fold)
+- `kfold_misturado`: KFold com embaralhamento, sem agrupar contexto de captura.
+- `groupkfold_por_sessao`: separa por sessão de captura (recomendado para reduzir vazamento entre frames semelhantes).
+- `groupkfold_por_anotador`: separa por origem/anotador (mais restritivo).
+
+Detalhamento prático de cada estratégia:
+- `kfold_misturado`:
+  - Mistura todas as imagens e distribui nos folds apenas com base em aleatoriedade.
+  - Pode colocar no mesmo fold de treino/validação imagens muito parecidas (mesma baia, mesma câmera, mesmo horário).
+  - É útil para baseline rápido, mas tende a otimista quando há muitos frames semelhantes.
+- `groupkfold_por_sessao`:
+  - Agrupa imagens pela sessão de captura (informações inferidas do nome do arquivo, como data/baia/câmera).
+  - Regra: um grupo (sessão) nunca aparece simultaneamente em treino e validação no mesmo fold.
+  - Isso reduz vazamento de contexto visual e melhora a medição de generalização real.
+- `groupkfold_por_anotador`:
+  - Agrupa por origem/anotador (proxy baseado em estrutura/nome dos arquivos).
+  - Regra: dados de um mesmo grupo de anotação ficam em apenas um lado do fold.
+  - É mais rígido e pode derrubar métrica de validação, mas é mais robusto contra viés de origem.
+
+Resumo objetivo:
+- Separação por **baia/sessão/anotador** acontece na **Fase 1 (Pose)**, durante a criação dos folds de treino/validação.
+- Essa separação **não** é o split principal da classificação.
+
+Os arquivos auxiliares de split ficam em `dados/processados/yolo_pose/splits` e os treinos por fold em `modelos/pose/runs/fold_*`.
+
+### Saídas e artefatos da Fase 1
+- Dataset YOLO pronto: `dados/processados/yolo_pose/images`, `dados/processados/yolo_pose/labels`, `dados/processados/yolo_pose/dataset.yaml`
+- Treinos por fold: `modelos/pose/runs/fold_1`, ..., `modelos/pose/runs/fold_k`
+- Checkpoints por fold: `modelos/pose/runs/fold_X/weights/best.pt` (e `last.pt` como fallback)
+- Métricas brutas por fold: `modelos/pose/runs/fold_X/results.csv` (uma curva por época; o pipeline lê a última linha de cada fold)
+- Agregação final dos folds: `saidas/relatorios/metricas_pose.json` (lista `folds` + `melhor_modelo.path` e `melhor_modelo.map50_95`)
+- Critério do melhor modelo: maior `Pose_mAP50-95` do fold (fallback para `Box_mAP50-95` se necessário)
+- Arquivos auxiliares de split usados no treino: `dados/processados/yolo_pose/splits/split_fold_X.yaml`, `split_fold_X_train.txt`, `split_fold_X_val.txt`
+- Inferências de inspeção:
+  - retorno JSON impresso no terminal ao executar `inferir-pose`;
+  - imagem com keypoints: `saidas/inferencias/imagens_plotadas/<nome_imagem>`;
+  - preview de augmentação: `saidas/inferencias/imagens_plotadas/<nome_imagem>_aug_preview.<ext>`.
+- Seleção de modelo para inferência (`inferir-pose`): 1) `metricas_pose.json` (`melhor_modelo.path`), 2) `best.pt` mais recente em `modelos/pose/runs`, 3) `pose.model_name` do `config.yaml`.
+
+### Data augmentation (YOLO nativo)
+A Fase 1 utiliza augmentations nativas do Ultralytics/YOLO (sem Albumentations).
+
+#### Política de flip horizontal (`fliplr`)
+- **Padrão:** `fliplr=0.0` (desligado) para evitar efeitos de orientação nos recursos geométricos.
+- Se você ativar `fliplr>0`, **obrigatório** ativar `classificacao.normalizar_orientacao=true` para normalizar os keypoints no espaço do bbox antes de calcular features.
+
+Exemplo:
+```yaml
+pose:
+  usar_data_augmentation: true
+  augmentacao:
+    degrees: 5.0
+    fliplr: 0.0
+    flipud: 0.0
+    mosaic: 0.7
+    mixup: 0.1
+classificacao:
+  normalizar_orientacao: false
+```
+
+Recomendações:
+- manter `degrees` baixo (ex.: 5–10)
+- `flipud=0.0`
+- `mosaic/mixup` moderados
+
+## Fase 2 — Geração de features (CSV)
+
+### Visão geral do pipeline da Fase 2
+A Fase 2 transforma imagens do `dataset_classificacao` em um dataset tabular para treino da identificação.
+
+Fluxo completo:
+1. **Entrada bruta:** `dados/raw/dataset_classificacao/<id_vaca>/*.jpg`.
+2. **Seleção do modelo de pose para extração:**
+   - prioridade 1: `saidas/relatorios/metricas_pose.json` (`melhor_modelo.path`);
+   - prioridade 2: `best.pt` mais recente em `modelos/pose/runs`;
+   - prioridade 3: `pose.model_name` do `config.yaml`.
+3. **Split externo por vaca (antes de extrair features):**
+   - para cada vaca, separa treino/teste por `classificacao.split_teste`;
+   - gera listas de split em `dados/processados/classificacao/splits`.
+4. **Inferência de pose por imagem:**
+   - executa YOLO Pose na imagem;
+   - seleciona apenas a instância-alvo (quando há múltiplas vacas).
+5. **Filtro de qualidade da pose:**
+   - calcula média de confiança dos keypoints visíveis;
+   - descarta imagem se não atingir `classificacao.filtro_confianca_pose.conf_media_min`.
+6. **Cálculo de features geométricas:**
+   - gera a linha real (`origem_instancia=real`);
+   - anexa metadados de split/augmentação.
+7. **Augmentação de keypoints (somente treino):**
+   - gera cópias com ruído gaussiano se habilitado;
+   - nunca gera augmentação para instâncias marcadas como `teste`.
+8. **Persistência dos artefatos:**
+   - salva CSV final de features;
+   - salva lista de descartes com motivo.
+
+### Como funciona a separação de dados na Fase 2
+- A separação principal é **por vaca**, usando `classificacao.split_teste` (ex.: 0.10).
+- O split é feito por imagem, preservando a proporção dentro de cada classe.
+- Essa etapa define quem é treino e quem é teste **antes** da augmentação.
+- Regra de segurança: augmentação de keypoints é aplicada apenas em `split_instancia=treino`.
+
+Arquivos de split gerados:
+- `dados/processados/classificacao/splits/treino.txt`
+- `dados/processados/classificacao/splits/teste_10pct.txt`
+- `dados/processados/classificacao/splits/treino_com_pasta.txt`
+- `dados/processados/classificacao/splits/teste_10pct_com_pasta.txt`
+
+Uso de cada arquivo:
+- `treino.txt` e `teste_10pct.txt`: usados pelo software (treino e avaliação).
+- `treino_com_pasta.txt` e `teste_10pct_com_pasta.txt`: arquivos auxiliares para leitura humana/inspeção; não são consumidos pelo pipeline.
+
+### Detalhes das Features Geométricas
 O sistema extrai um conjunto robusto de features visando invariância a escala, rotação e translação (posição da vaca na imagem).
 
 ### 1. Features Básicas (BBox)
@@ -208,35 +392,63 @@ Incluídas para aproximar variáveis usadas em artigos de conformação:
 - `razao_largura_hooks_por_largura_pins`
 - `angulo_hook_up_pin_up_tail_head`
 
+### 10. Catálogo completo de features (incluindo as comentadas no `config.yaml`)
+Esta é a lista completa de features aceitas em `classificacao.features.selecionadas` no estado atual do projeto.
+
+- `dist_hip_tail_head`
+- `dist_tail_head_pin_up`
+- `dist_back_hook_up`
+- `bbox_aspect_ratio`
+- `bbox_area_norm`
+- `pca_excentricidade`
+- `area_poligono_pelvico_norm`
+- `area_triangulo_torax_norm`
+- `indice_robustez`
+- `indice_triangulo_traseiro`
+- `desvio_coluna_back_norm`
+- `desvio_coluna_hip_norm`
+- `razao_dist_back_hip_por_dist_hip_hook_up`
+- `razao_dist_hip_hook_up_por_dist_hook_up_pin_up`
+- `razao_dist_hip_hook_down_por_dist_hook_down_pin_down`
+- `razao_dist_hip_tail_head_por_dist_hook_down_pin_down`
+- `razao_dist_hip_tail_head_por_dist_hook_up_pin_up`
+- `razao_dist_hip_hook_up_por_dist_hip_tail_head`
+- `razao_dist_hip_hook_down_por_dist_hip_tail_head`
+- `razao_dist_back_hip_por_dist_hip_tail_head`
+- `razao_dist_back_hip_por_dist_hip_hook_down`
+- `razao_dist_back_hip_por_dist_hip_pin_up`
+- `razao_dist_back_hip_por_dist_hip_pin_down`
+- `razao_largura_hooks_por_largura_pins`
+- `angulo_hook_up_pin_up_tail_head`
+- `angulo_hook_up_hip_tail_head`
+- `angulo_hook_up_back_hook_down`
+- `angulo_pin_up_hip_pin_down`
+- `angulo_hook_up_hip_hook_down`
+- `angulo_hip_hook_up_pin_up`
+- `angulo_hip_hook_down_pin_down`
+- `angulo_hook_down_hip_tail_head`
+- `angulo_pin_up_tail_head_pin_down`
+- `angulo_withers_back_tail_head`
+- `sc_withers_x`
+- `sc_withers_y`
+- `sc_back_x`
+- `sc_back_y`
+- `sc_hook_up_x`
+- `sc_hook_up_y`
+- `sc_hook_down_x`
+- `sc_hook_down_y`
+- `sc_hip_x`
+- `sc_hip_y`
+- `sc_tail_head_x`
+- `sc_tail_head_y`
+- `sc_pin_up_x`
+- `sc_pin_up_y`
+- `sc_pin_down_x`
+- `sc_pin_down_y`
+
 ---
 
-## Data augmentation (YOLO nativo)
-A Fase 1 utiliza augmentations nativas do Ultralytics/YOLO (sem Albumentations).
-
-### Política de flip horizontal (`fliplr`)
-- **Padrão:** `fliplr=0.0` (desligado) para evitar efeitos de orientação nos recursos geométricos.
-- Se você ativar `fliplr>0`, **obrigatório** ativar `classificacao.normalizar_orientacao=true` para normalizar os keypoints no espaço do bbox antes de calcular features.
-
-Exemplo:
-```yaml
-pose:
-  usar_data_augmentation: true
-  augmentacao:
-    degrees: 5.0
-    fliplr: 0.0
-    flipud: 0.0
-    mosaic: 0.7
-    mixup: 0.1
-classificacao:
-  normalizar_orientacao: false
-```
-
-Recomendações:
-- manter `degrees` baixo (ex.: 5–10)
-- `flipud=0.0`
-- `mosaic/mixup` moderados
-
-## Data augmentation da classificação (keypoints)
+### Data augmentation da classificação (keypoints)
 Na Fase 2 (`gerar-features`), o pipeline pode gerar amostras sintéticas a partir dos keypoints inferidos:
 - A linha **real** é sempre gerada.
 - Cópias com ruído gaussiano em `(x,y)` são geradas **somente para split de treino**.
@@ -257,9 +469,32 @@ O CSV de features inclui metadados:
 - `origem_instancia` (`real` ou `augmentation`)
 - `is_aug`, `aug_id`, `split_instancia`
 
+Significado de cada campo:
+- `origem_instancia`:
+  - indica a origem da linha de features.
+  - `real`: linha gerada diretamente dos keypoints inferidos da imagem original.
+  - `augmentation`: linha sintética gerada a partir da instância real com ruído gaussiano nos keypoints.
+- `is_aug`:
+  - flag numérica equivalente à origem.
+  - `0` para instância real, `1` para instância augmentada.
+  - útil para filtros rápidos em pandas/SQL sem depender de texto.
+- `aug_id`:
+  - identificador da cópia augmentada gerada a partir da mesma instância real.
+  - para a linha real, o valor é `0`.
+  - para augmentações, o valor vai de `1` até `n_copias` (configurado em `classificacao.augmentacao_keypoints.n_copias`).
+- `split_instancia`:
+  - indica a qual split externo (definido na Fase 2) a linha pertence.
+  - `treino`: pode conter `real` e `augmentation`.
+  - `teste`: contém apenas `real` (não há augmentation no teste).
+
+Observação importante sobre validação:
+- Não existe valor `validacao` em `split_instancia`, porque esse campo representa apenas o split externo (Fase 2).
+- A validação é criada internamente na Fase 3, como um recorte do bloco `treino`.
+- Na configuração atual do projeto (`classificacao.validacao_interna.usar_apenas_real=true`), a validação interna usa somente instâncias `real` (sem `augmentation`).
+
 ---
 
-## Seleção da instância-alvo (Fase 2)
+### Seleção da instância-alvo
 Mesmo com filmagem de cima, pode existir uma segunda vaca parcialmente no frame.
 
 A seleção da instância-alvo usa:
@@ -271,15 +506,127 @@ Se nenhuma instância passar `conf_min`, a imagem é **descartada do treino** e 
 
 ---
 
-## Treino do classificador (XGBoost/CatBoost/RF/SVM/MLP) — early stopping
-O treino tabular cria uma **validação interna** (ex.: 80/20 dentro do treino 90%) e utiliza:
-- `early_stopping_rounds`
+### Saídas e artefatos da Fase 2
+- CSV principal de features: `dados/processados/classificacao/features/features_completas.csv`
+- Relatório de descartes por imagem: `dados/processados/classificacao/features/imagens_descartadas.csv`
+- Splits externos por vaca: `dados/processados/classificacao/splits/*.txt`
+- Metadados no CSV para rastreabilidade:
+  - `origem_instancia` (`real` ou `augmentation`);
+  - `is_aug`, `aug_id`;
+  - `split_instancia` (`treino` ou `teste`).
 
-Para evitar vazamento entre cópias augmentadas da mesma imagem, a validação interna é feita por **grupo `arquivo`**.
-Opcionalmente, é possível filtrar a validação interna para usar apenas instâncias reais com
-`classificacao.validacao_interna.usar_apenas_real=true`.
+Leitura operacional:
+- `features_completas.csv` é o insumo direto da Fase 3.
+- `imagens_descartadas.csv` explica por que uma imagem não entrou (ex.: sem instância confiável, baixa confiança média de keypoints, erro de processamento).
 
-Isso reduz overfitting quando `n_estimators` é alto (ex.: 800).
+## Fase 3 — Classificação da vaca
+
+### Visão geral do pipeline da Fase 3
+A Fase 3 treina o classificador final de identificação e mede desempenho em teste externo (caso real).
+
+Fluxo completo:
+1. **Entrada:** `dados/processados/classificacao/features/features_completas.csv` + splits em `dados/processados/classificacao/splits`.
+2. **Escolha do modelo:** definida em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch`).
+3. **Treino externo:** usa apenas arquivos do `treino.txt`.
+4. **Validação interna:** cria split interno por grupo `arquivo` (`GroupShuffleSplit`) para tuning/early stopping, usando o campo `arquivo` do `features_completas.csv`.
+5. **Otimização de hiperparâmetros:** Optuna (ou random search de fallback) quando `classificacao.otimizacao_hiperparametros.habilitar=true`.
+6. **Treino final e salvamento:** salva modelo, encoder e nomes de features.
+7. **Avaliação final (`avaliar-classificador`):** usa somente `teste_10pct.txt` e apenas instâncias reais, gerando métricas e gráficos.
+
+### Como funciona a separação de dados na classificação
+Na classificação, a lógica de split é diferente da Fase 1:
+
+1. **Split externo por vaca (treino/teste final):**
+   - O dataset de classificação é organizado por classe (uma subpasta por vaca).
+   - Para cada vaca, o pipeline separa imagens em treino e teste conforme `classificacao.split_teste` (ex.: 90/10).
+   - Esse teste externo é o “caso real” usado para resultado final (`metricas_classificacao.json`).
+
+2. **Validação interna dentro do treino externo:**
+   - Do bloco de treino externo, separa-se uma fração para validação interna (`classificacao.validacao_interna.fracao`).
+   - Essa validação é usada para escolha de hiperparâmetros e early stopping dos modelos.
+
+3. **Proteção contra vazamento por augmentation:**
+   - Como uma mesma imagem pode gerar múltiplas cópias sintéticas, a divisão interna é feita por grupo `arquivo` (coluna `arquivo` do CSV de features).
+   - Regra: cópias da mesma imagem base não podem cair uma parte em treino e outra em validação interna.
+   - Opcionalmente, `classificacao.validacao_interna.usar_apenas_real=true` restringe validação interna a instâncias reais.
+
+Resumo objetivo:
+- Separação principal da classificação é **por vaca e por imagem/arquivo**.
+- A separação por **baia/sessão/anotador** fica na Fase 1 (Pose), não no split principal da classificação.
+
+### Treino do classificador e early stopping
+O treino é comandado por `python -m src.cli treinar-classificador` e:
+- lê `features_completas.csv`;
+- filtra somente arquivos do `treino.txt`;
+- aplica as features definidas em `classificacao.features.selecionadas`;
+- faz validação interna por `arquivo`.
+
+Early stopping por família de modelo:
+- `xgboost`: `early_stopping_rounds` na validação interna.
+- `catboost`: `use_best_model` com validação interna e `best_iteration`.
+- `sklearn_rf` e `svm`: sem early stopping nativo; dependem de tuning de hiperparâmetros.
+- `mlp` (sklearn): early stopping interno do próprio `MLPClassifier`, monitorando o **score de validação (acurácia)**.
+- `mlp_torch`: early stopping por métrica configurável em `classificacao.mlp_torch.early_stop_metric` (`f1_macro`, `val_loss`, `accuracy`).
+
+### Otimização de hiperparâmetros (Optuna/Random Search)
+Na arquitetura atual, a otimização automática de hiperparâmetros está na **Fase 3**.
+
+Parâmetros de controle em `config.yaml`:
+- `classificacao.otimizacao_hiperparametros.habilitar`
+- `classificacao.otimizacao_hiperparametros.metodo` (`optuna` ou `random`)
+- `classificacao.otimizacao_hiperparametros.n_trials`
+- `classificacao.otimizacao_hiperparametros.timeout_segundos`
+- `classificacao.otimizacao_hiperparametros.seed`
+
+Modelos cobertos por otimização:
+- `xgboost`
+- `catboost`
+- `sklearn_rf`
+- `svm`
+- `mlp` (sklearn)
+- `mlp_torch`
+
+Como a otimização funciona no pipeline:
+1. Cria split interno treino/validação por grupo `arquivo` (coluna `arquivo` do CSV de features).
+2. Executa trials (`n_trials`) testando combinações de hiperparâmetros.
+3. Avalia cada trial na validação interna.
+4. Seleciona o melhor conjunto e treina o modelo final.
+5. Salva o resumo da otimização em `metricas_classificacao_treino.json` e gráficos `*_otimizacao_trials.png`.
+
+Observação:
+- A Fase 1 (Pose) usa parâmetros definidos em `pose.*`; o bloco de otimização por Optuna descrito acima é da Fase 3.
+
+### Avaliação final (caso real)
+`python -m src.cli avaliar-classificador`:
+- usa apenas arquivos de `teste_10pct.txt`;
+- ignora amostras `augmentation` no teste;
+- calcula métricas globais (`accuracy`, `f1_macro`, top-k);
+- calcula cenário com rejeição (`NAO_IDENTIFICADO`) por confiança/margem;
+- gera matriz de confusão e gráficos de confiança/cobertura.
+
+### Saídas e artefatos da Fase 3
+- Modelos e metadados:
+  - `modelos/classificacao/modelos_salvos/label_encoder.pkl`
+  - `modelos/classificacao/modelos_salvos/feature_names.pkl`
+  - `modelos/classificacao/modelos_salvos/xgboost_model.json`
+  - `modelos/classificacao/modelos_salvos/catboost_model.cbm`
+  - `modelos/classificacao/modelos_salvos/rf_model.joblib`
+  - `modelos/classificacao/modelos_salvos/svm_model.joblib`
+  - `modelos/classificacao/modelos_salvos/mlp_model.joblib`
+  - `modelos/classificacao/modelos_salvos/mlp_torch_model.pt`
+  - `modelos/classificacao/modelos_salvos/mlp_torch_scaler.joblib`
+- Relatórios de treino:
+  - `saidas/relatorios/metricas_classificacao_treino.json`
+  - gráficos de otimização/importância por modelo (`xgb_*`, `catboost_*`, `rf_*`, `svm_*`, `mlp_*`, `mlp_torch_*`)
+  - curvas do MLP final: `mlp_curva_loss_treino_validacao.png`, `mlp_curva_acuracia_treino_validacao.png`
+  - curvas do MLP Torch final: `mlp_torch_curva_loss_treino_validacao.png`, `mlp_torch_curva_acuracia_treino_validacao.png`
+- Relatórios de avaliação final:
+  - `saidas/relatorios/metricas_classificacao.json`
+  - `saidas/relatorios/matriz_confusao.csv`
+  - `saidas/relatorios/matriz_confusao.png`
+  - `saidas/relatorios/metricas_por_classe.png`
+  - `saidas/relatorios/confianca_corretas_vs_incorretas.png`
+  - `saidas/relatorios/cobertura_vs_acuracia.png`
 
 ---
 
@@ -307,10 +654,6 @@ Inicia o treinamento do YOLO Pose (usando k-fold ou split simples definido no co
 ```bash
 python -m src.cli treinar-pose
 ```
-Estratégias de validação suportadas em `pose.estrategia_validacao`:
-- `kfold_misturado`
-- `groupkfold_por_sessao` (recomendado para reduzir vazamento entre frames/sessões semelhantes)
-- `groupkfold_por_anotador` (proxy por origem/prefixo no nome do arquivo)
 
 #### 3. Inferir Pose (Teste Fase 1)
 Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
@@ -344,7 +687,7 @@ python -m src.cli gerar-features
 ```
 
 #### 5. Treinar Classificador (Fase 3)
-Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib` ou `mlp_model.joblib`, além do encoder):
+Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib`, `mlp_model.joblib` ou `mlp_torch_model.pt` + `mlp_torch_scaler.joblib`, além do encoder):
 ```bash
 python -m src.cli treinar-classificador
 ```
@@ -359,7 +702,7 @@ python -m src.cli avaliar-classificador
 Executa o fluxo completo para uma nova imagem:
 1. Detecta pose (YOLO).
 2. Extrai features.
-3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm` ou `mlp`).
+3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp` ou `mlp_torch`).
 ```bash
 python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
 ```
@@ -368,34 +711,44 @@ python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --des
 > **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os **nomes dos arquivos** (`arquivo.jpg`) reservados para teste.
 
 #### 8. Pipeline Completo
-Executa todas as etapas em sequência (útil para reprodução total):
+Executa as etapas de pipeline de treino/avaliação em sequência (útil para reprodução total):
 ```bash
 python -m src.cli pipeline-completo
 ```
+Inclui:
+- `preprocessar-pose`
+- `treinar-pose`
+- `gerar-features`
+- `treinar-classificador`
+- `avaliar-classificador`
+
+Não inclui:
+- `inferir-pose`
+- `classificar-imagem`
 ---
 
-## Saídas e métricas
-- Pose:
-  - `saidas/relatorios/metricas_pose.json`
-- Classificação:
-  - `saidas/relatorios/metricas_classificacao.json`
-- `saidas/relatorios/metricas_classificacao_treino.json`
-- `saidas/relatorios/matriz_confusao.png`
-- `saidas/relatorios/matriz_confusao.csv`
-- `saidas/relatorios/metricas_por_classe.png`
-- `saidas/relatorios/confianca_corretas_vs_incorretas.png`
-- `saidas/relatorios/cobertura_vs_acuracia.png`
-- `saidas/relatorios/xgb_curva_mlogloss.png`
-- `saidas/relatorios/xgb_curva_merror.png`
-- `saidas/relatorios/xgb_gap_mlogloss.png`
-- `saidas/relatorios/xgb_gap_merror.png`
-- `saidas/relatorios/xgb_importancia_gain_topn.png`
- - `saidas/relatorios/rf_importancia_topn.png`
- - `saidas/relatorios/rf_otimizacao_trials.png`
- - `saidas/relatorios/catboost_importancia_topn.png`
- - `saidas/relatorios/catboost_otimizacao_trials.png`
- - `saidas/relatorios/svm_otimizacao_trials.png`
- - `saidas/relatorios/mlp_otimizacao_trials.png`
+## Resultados alcançados (baseline atual)
+Baseline atual: `mlp_torch`.
+
+Métricas de Pose (YOLO):
+- `k_folds`: **5**
+- `Box_mAP50` (média dos folds): **0.9950**
+- `Box_mAP50-95` (média dos folds): **0.9098**
+- `Pose_mAP50` (média dos folds): **0.9950**
+- `Pose_mAP50-95` (média dos folds): **0.8979**
+- `Pose_mAP50-95` (melhor fold): **0.91087** (fold 5)
+
+Métricas no teste final:
+- `accuracy`: **0.5667**
+- `f1_macro`: **0.5689**
+- `top1_accuracy`: **0.5667**
+- `top3_accuracy`: **0.7933**
+- `top5_accuracy`: **0.8733**
+
+Com rejeição (`confianca_min=0.30`):
+- `cobertura`: **0.9733**
+- `accuracy_aceitas`: **0.5822**
+- `f1_macro_aceitas`: **0.5849**
 
 ---
 

@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import xgboost as xgb
 
 from ..util.io_arquivos import garantir_diretorio
+from .mlp_torch import carregar_checkpoint_mlp_torch, predict_proba_mlp_torch
 
 
 def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,13 +70,19 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         model_path = models_dir / "svm_model.joblib"
     elif model_type == "mlp":
         model_path = models_dir / "mlp_model.joblib"
+    elif model_type == "mlp_torch":
+        model_path = models_dir / "mlp_torch_model.pt"
     else:
         model_path = models_dir / "xgboost_model.json"
     le_path = models_dir / "label_encoder.pkl"
     fn_path = models_dir / "feature_names.pkl" # Se existir
+    scaler_torch_path = models_dir / "mlp_torch_scaler.joblib"
     
     if not model_path.exists() or not le_path.exists():
         logger.error(f"Modelo não encontrado em {models_dir}. Treine antes.")
+        return
+    if model_type == "mlp_torch" and not scaler_torch_path.exists():
+        logger.error(f"Scaler do MLP Torch não encontrado em {models_dir}. Treine antes.")
         return
 
     # Carregar Dados
@@ -130,13 +137,29 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         clf.load_model(str(model_path))
     elif model_type in ("sklearn_rf", "svm", "mlp"):
         clf = joblib.load(model_path)
+    elif model_type == "mlp_torch":
+        clf = None
+        artefato_torch = carregar_checkpoint_mlp_torch(
+            model_path=model_path,
+            scaler_path=scaler_torch_path,
+            device_cfg=config.get("classificacao", {}).get("mlp_torch", {}).get("device", "cuda"),
+            logger=logger,
+        )
     else:
         clf = xgb.XGBClassifier()
         clf.load_model(model_path)
     
     # Inferência
-    preds = np.asarray(clf.predict(X_test)).reshape(-1)
-    probs = np.asarray(clf.predict_proba(X_test))
+    if model_type == "mlp_torch":
+        probs = predict_proba_mlp_torch(
+            X=X_test,
+            artefato=artefato_torch,
+            batch_size=int(config.get("classificacao", {}).get("mlp_torch", {}).get("batch_size", 1024)),
+        )
+        preds = np.argmax(probs, axis=1)
+    else:
+        preds = np.asarray(clf.predict(X_test)).reshape(-1)
+        probs = np.asarray(clf.predict_proba(X_test))
     if probs.ndim == 1:
         probs = np.vstack([1.0 - probs, probs]).T
     conf_max = probs.max(axis=1).reshape(-1)
