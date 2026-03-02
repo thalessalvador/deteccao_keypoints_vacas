@@ -427,11 +427,19 @@ Exemplo:
 pose:
   usar_data_augmentation: true
   augmentacao:
-    degrees: 5.0
-    fliplr: 0.0
-    flipud: 0.0
-    mosaic: 0.7
-    mixup: 0.1
+    hsv_h: 0.015 # Variacao de matiz
+    hsv_s: 0.7 # Variacao de saturacao
+    hsv_v: 0.4 # Variacao de brilho/valor
+    degrees: 5.0 # Rotacao maxima (graus)
+    translate: 0.10 # Translacao maxima relativa
+    scale: 0.50 # Escala maxima relativa
+    shear: 2.0 # Cisalhamento maximo (graus)
+    perspective: 0.0005 # Distorcao de perspectiva
+    fliplr: 0.0 # Probabilidade de flip horizontal
+    flipud: 0.0 # Probabilidade de flip vertical
+    mosaic: 0.7 # Probabilidade de mosaic
+    mixup: 0.1 # Probabilidade de mixup
+    erasing: 0.2 # Probabilidade de apagamento aleatorio (random erasing)
 classificacao:
   normalizar_orientacao: false
 ```
