@@ -793,7 +793,7 @@ Métricas de Pose (YOLO):
 - `k_folds`: **5**
 - `Box_mAP50` (média dos folds): **0.9948**
 - `Box_mAP50-95` (média dos folds): **0.9018**
-- `Pose_mAP50` (média dos folds): **0.9948 **
+- `Pose_mAP50` (média dos folds): **0.9948**
 - `Pose_mAP50-95` (média dos folds): **0.9128**
 - `Pose_mAP50-95` (melhor fold): **0.9218** (fold 2)
 
