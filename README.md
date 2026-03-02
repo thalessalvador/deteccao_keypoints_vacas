@@ -822,6 +822,7 @@ Métricas de Pose (YOLO):
 
 Métricas no teste final:
 - `accuracy`: **0.6200**
+- `recall_macro`: **0.6200**
 - `f1_macro`: **0.6125**
 - `top1_accuracy`: **0.6200**
 - `top3_accuracy`: **0.8133**
@@ -845,6 +846,7 @@ Métricas de Pose (YOLO):
 
 Métricas no teste final:
 - `accuracy`: **0.5733**
+- `recall_macro`: **0.5733**
 - `f1_macro`: **0.5728**
 - `top1_accuracy`: **0.5733**
 - `top3_accuracy`: **0.7933**
