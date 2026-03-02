@@ -488,7 +488,17 @@ Uso de cada arquivo:
 - `treino_com_pasta.txt` e `teste_10pct_com_pasta.txt`: arquivos auxiliares para leitura humana/inspeção; não são consumidos pelo pipeline.
 
 ### Detalhes das Features Geométricas
-O sistema extrai um conjunto robusto de features visando invariância a escala, rotação e translação (posição da vaca na imagem).
+O sistema extrai um conjunto robusto de features visando invariância a escala, rotação e translação (posição da vaca na imagem). A escolha do conjunto de features privilegiou features relativas ao invés de features absolutas.
+
+Como a captação de fotos não vêm do mesmo dispositivo e sequer são da mesma marca e modelo, estamos lidando com diferenças (mesmo que sutis) na altura e angulação das câmeras e tambêm quanto ao zoom. Utilizar features absolutas, como por exemplo distâncias absolutas poderia induzir o modelo ao erro.
+
+Ao invés disso, foram utilizadas áreas normalizadas, razões entre as medidas, medidas de curvatura, coordenadas relativas e ângulos. Nesse último caso, houve até a tentativa de uso de seno e cosseno, entretanto, ao invés do esperado, houve degradação do modelo.
+
+O conjunto completo de features foi submetido aos modelos de classificação XGBoost  e Random forest, pois esses modelos geram uma lista de features que mais contribuem para o resultado final do modelo em ordem de importância. Foram testados os usos de 10, 15, 20, 25, 30 e 23 features. Este último fez o modelo performar melhor.
+
+23 features foram selecionadas em uma lista de 50 features (apresentadas abaixo no item 10). As 23 selecionadas estão descomentadas em `classificacao.features.selecionadas` no `config.yaml`.
+
+Segue uma descrição das features disponíveis:
 
 ### 1. Features Básicas (BBox)
 - `bbox_aspect_ratio`: Razão largura/altura do bounding box (forma geral).
@@ -535,56 +545,56 @@ Incluídas para aproximar variáveis usadas em artigos de conformação:
 ### 10. Catálogo completo de features (incluindo as comentadas no `config.yaml`)
 Esta é a lista completa de features aceitas em `classificacao.features.selecionadas` no estado atual do projeto.
 
-- `dist_hip_tail_head`
-- `dist_tail_head_pin_up`
-- `dist_back_hook_up`
-- `bbox_aspect_ratio`
-- `bbox_area_norm`
-- `pca_excentricidade`
-- `area_poligono_pelvico_norm`
-- `area_triangulo_torax_norm`
-- `indice_robustez`
-- `indice_triangulo_traseiro`
-- `desvio_coluna_back_norm`
-- `desvio_coluna_hip_norm`
-- `razao_dist_back_hip_por_dist_hip_hook_up`
-- `razao_dist_hip_hook_up_por_dist_hook_up_pin_up`
-- `razao_dist_hip_hook_down_por_dist_hook_down_pin_down`
-- `razao_dist_hip_tail_head_por_dist_hook_down_pin_down`
-- `razao_dist_hip_tail_head_por_dist_hook_up_pin_up`
-- `razao_dist_hip_hook_up_por_dist_hip_tail_head`
-- `razao_dist_hip_hook_down_por_dist_hip_tail_head`
-- `razao_dist_back_hip_por_dist_hip_tail_head`
-- `razao_dist_back_hip_por_dist_hip_hook_down`
-- `razao_dist_back_hip_por_dist_hip_pin_up`
-- `razao_dist_back_hip_por_dist_hip_pin_down`
-- `razao_largura_hooks_por_largura_pins`
-- `angulo_hook_up_pin_up_tail_head`
-- `angulo_hook_up_hip_tail_head`
-- `angulo_hook_up_back_hook_down`
-- `angulo_pin_up_hip_pin_down`
-- `angulo_hook_up_hip_hook_down`
-- `angulo_hip_hook_up_pin_up`
-- `angulo_hip_hook_down_pin_down`
-- `angulo_hook_down_hip_tail_head`
-- `angulo_pin_up_tail_head_pin_down`
-- `angulo_withers_back_tail_head`
-- `sc_withers_x`
-- `sc_withers_y`
-- `sc_back_x`
-- `sc_back_y`
-- `sc_hook_up_x`
-- `sc_hook_up_y`
-- `sc_hook_down_x`
-- `sc_hook_down_y`
-- `sc_hip_x`
-- `sc_hip_y`
-- `sc_tail_head_x`
-- `sc_tail_head_y`
-- `sc_pin_up_x`
-- `sc_pin_up_y`
-- `sc_pin_down_x`
-- `sc_pin_down_y`
+- `dist_hip_tail_head`: Distância quadril-cauda (comprimento posterior).
+- `dist_tail_head_pin_up`: Distância cauda-pin_up.
+- `dist_back_hook_up`: Distância back-hook_up.
+- `bbox_aspect_ratio`: Razão largura/altura do bbox da vaca.
+- `bbox_area_norm`: Área do bbox normalizada pela área da imagem.
+- `pca_excentricidade`: Alongamento global da nuvem de keypoints (PCA).
+- `area_poligono_pelvico_norm`: Área pélvica normalizada pelo bbox.
+- `area_triangulo_torax_norm`: Área torácica normalizada.
+- `indice_robustez`: Largura de hooks / comprimento withers-tail_head.
+- `indice_triangulo_traseiro`: Área do triângulo hip-pin_up-pin_down normalizada.
+- `desvio_coluna_back_norm`: Desvio perpendicular de back na linha withers-tail_head.
+- `desvio_coluna_hip_norm`: Desvio perpendicular de hip na linha withers-tail_head.
+- `razao_dist_back_hip_por_dist_hip_hook_up`: Proporção dorso/quadril para hook_up.
+- `razao_dist_hip_hook_up_por_dist_hook_up_pin_up`: Proporção entre segmentos do quadril superior.
+- `razao_dist_hip_hook_down_por_dist_hook_down_pin_down`: Proporção entre segmentos do quadril inferior.
+- `razao_dist_hip_tail_head_por_dist_hook_down_pin_down`: Proporção quadril-cauda vs base inferior.
+- `razao_dist_hip_tail_head_por_dist_hook_up_pin_up`: Proporção quadril-cauda vs base superior.
+- `razao_dist_hip_hook_up_por_dist_hip_tail_head`: Proporção hook_up em relação ao eixo hip-tail_head.
+- `razao_dist_hip_hook_down_por_dist_hip_tail_head`: Proporção hook_down em relação ao eixo hip-tail_head.
+- `razao_dist_back_hip_por_dist_hip_tail_head`: Proporção tronco traseiro no eixo longitudinal.
+- `razao_dist_back_hip_por_dist_hip_hook_down`: Proporção back-hip vs hip-hook_down.
+- `razao_dist_back_hip_por_dist_hip_pin_up`: Proporção back-hip vs hip-pin_up.
+- `razao_dist_back_hip_por_dist_hip_pin_down`: Proporção back-hip vs hip-pin_down.
+- `razao_largura_hooks_por_largura_pins`: Largura entre hooks dividida pela largura entre pins.
+- `angulo_hook_up_pin_up_tail_head`: Ângulo hook_up-pin_up-tail_head.
+- `angulo_hook_up_hip_tail_head`: Ângulo hook_up-hip-tail_head.
+- `angulo_hook_up_back_hook_down`: Ângulo hook_up-back-hook_down.
+- `angulo_pin_up_hip_pin_down`: Abertura pin_up-hip-pin_down.
+- `angulo_hook_up_hip_hook_down`: Abertura pélvica no quadril.
+- `angulo_hip_hook_up_pin_up`: Ângulo lateral superior da pelve.
+- `angulo_hip_hook_down_pin_down`: Ângulo lateral inferior da pelve.
+- `angulo_hook_down_hip_tail_head`: Ângulo hook_down-hip-tail_head.
+- `angulo_pin_up_tail_head_pin_down`: Abertura na região da cauda entre pins.
+- `angulo_withers_back_tail_head`: Ângulo da linha dorsal (withers-back-tail_head).
+- `sc_withers_x`: Shape-context X do withers.
+- `sc_withers_y`: Shape-context Y do withers.
+- `sc_back_x`: Shape-context X do back.
+- `sc_back_y`: Shape-context Y do back.
+- `sc_hook_up_x`: Shape-context X do hook_up.
+- `sc_hook_up_y`: Shape-context Y do hook_up.
+- `sc_hook_down_x`: Shape-context X do hook_down.
+- `sc_hook_down_y`: Shape-context Y do hook_down.
+- `sc_hip_x`: Shape-context X do hip.
+- `sc_hip_y`: Shape-context Y do hip.
+- `sc_tail_head_x`: Shape-context X do tail_head.
+- `sc_tail_head_y`: Shape-context Y do tail_head.
+- `sc_pin_up_x`: Shape-context X do pin_up.
+- `sc_pin_up_y`: Shape-context Y do pin_up.
+- `sc_pin_down_x`: Shape-context X do pin_down.
+- `sc_pin_down_y`: Shape-context Y do pin_down.
 
 ---
 
