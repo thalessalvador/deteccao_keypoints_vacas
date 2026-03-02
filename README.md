@@ -171,7 +171,6 @@ dados/raw/dataset_classificacao/
 ```
 - Cada subpasta em `dataset_classificacao` representa **uma vaca** (ID/classe), e as imagens dentro dela são fotos dessa mesma vaca.
 - ~50 imagens por vaca.
-- Split 90/10 por vaca.
 
 O dataset pode ser baixado em: https://drive.google.com/drive/folders/18bdtA7IN0lv84v6bTDopfJtCb2lFDPuH. Basta colocar seu conteúdo em dados/raw/dataset_classificacao.
 
@@ -793,7 +792,7 @@ Observação:
 
 ---
 
-## Resultados alcançados (Execução com dataset parcial - 984 imagens (as anotadas até 2026-02-28 15:08:08) -  mlp_torch)
+## Resultados alcançados (Execução com dataset parcial - 984 imagens (as anotadas até 2026-02-28 15:08:08) -  mlp_torch - `classificacao.augmentacao_keypoints.n_copias: 10`)
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**
@@ -816,32 +815,34 @@ Com rejeição (`confianca_min=0.50`):
 - `f1_macro_aceitas`: **0.6246**
 
 
-## Resultados alcançados (Execução com dataset completo - 1029 imagens -  mlp_torch)
+## Resultados alcançados (Execução com dataset completo - 1029 imagens -  mlp_torch - `classificacao.augmentacao_keypoints.n_copias: 5`)
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**
 - `Box_mAP50` (média dos folds): **0.9948**
-- `Box_mAP50-95` (média dos folds): **0.9018**
+- `Box_mAP50-95` (média dos folds): **0.8835**
 - `Pose_mAP50` (média dos folds): **0.9948**
-- `Pose_mAP50-95` (média dos folds): **0.9128**
-- `Pose_mAP50-95` (melhor fold): **0.9218** (fold 2)
+- `Pose_mAP50-95` (média dos folds): **0.9111**
+- `Pose_mAP50-95` (melhor fold): **0.9180** (fold 2)
 
 Métricas no teste final:
-- `accuracy`: **0.5667**
-- `f1_macro`: **0.5631**
-- `top1_accuracy`: **0.5667**
-- `top3_accuracy`: **0.7667**
-- `top5_accuracy`: **0.8467**
+- `accuracy`: **0.5733**
+- `f1_macro`: **0.5728**
+- `top1_accuracy`: **0.5733**
+- `top3_accuracy`: **0.7933**
+- `top5_accuracy`: **0.8867**
 
 Com rejeição (`confianca_min=0.50`):
-- `cobertura`: **0.8333**
-- `accuracy_aceitas`: **0.6320**
-- `f1_macro_aceitas`: **0.6176**
+- `cobertura`: **0.9400**
+- `accuracy_aceitas`: **0.6099**
+- `f1_macro_aceitas`: **0.6117**
 
 
 ## Nota sobre os resultados obtidos:
 
-Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 76%, é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. (Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top3 > 76% quer dizer que em mais de 76% dos casos o animal correto estava entre os 3 mais bem classificados da lista)
+Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%, é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
+
+O que é Top 3? Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top 3 > 79% quer dizer que em mais de 79% dos casos o animal correto estava entre os 3 mais bem classificados da lista. A mesma lógica se aplica ao Top 5.
 
 Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no exercício, a identificação exclusiva pelos keypoints.
 
