@@ -78,6 +78,26 @@ pip install --pre torch torchvision torchaudio --index-url https://download.pyto
 ```
 - **Out of memory (VRAM 8GB)**: Reduza `pose.batch` e `pose.imgsz` no `config.yaml`.
 
+Para rodar **exclusivamente em CPU**, ajuste no `config/config.yaml`:
+
+```yaml
+pose:
+  device: "cpu"
+
+classificacao:
+  xgboost:
+    device: "cpu"
+  catboost:
+    device: "cpu"
+  mlp_torch:
+    device: "cpu"
+  siamese_torch:
+    device: "cpu"
+```
+
+Opcional para estabilidade/performance em Windows:
+- `pose.workers: 0` (ou `2`).
+
 ---
 
 ## Estrutura de pastas (alto nível)
