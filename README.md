@@ -338,10 +338,21 @@ Detalhamento prático de cada estratégia:
   - Agrupa imagens pela sessão de captura (informações inferidas do nome do arquivo, como data/baia/câmera).
   - Regra: um grupo (sessão) nunca aparece simultaneamente em treino e validação no mesmo fold.
   - Isso reduz vazamento de contexto visual e melhora a medição de generalização real.
+
+  - Por que é melhor que kfold_misturado:
+
+    kfold_misturado pode colocar imagens quase idênticas da mesma sessão em treino e validação.
+    Isso gera vazamento de contexto: o modelo “reconhece a sessão”, não necessariamente a anatomia que deveria generalizar.
+    Resultado: métrica de validação inflada.
+    groupkfold_por_sessao evita isso:
+    toda uma sessão vai inteira para treino ou validação no fold.
+    Mede melhor generalização para sessões novas (cenário real).
+
 - `groupkfold_por_anotador`:
   - Agrupa por origem/anotador (proxy baseado em estrutura/nome dos arquivos).
   - Regra: dados de um mesmo grupo de anotação ficam em apenas um lado do fold.
   - É mais rígido e pode derrubar métrica de validação, mas é mais robusto contra viés de origem.
+
 
 Resumo objetivo:
 - Separação por **baia/sessão/anotador** acontece na **Fase 1 (Pose)**, durante a criação dos folds de treino/validação.
