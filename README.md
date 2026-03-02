@@ -136,6 +136,13 @@ Na prática, você pode deixar **imagens + anotações tudo junto** em `dados/ra
 - os nomes das imagens sejam únicos (evitar arquivos homônimos em pastas diferentes);
 - cada anotação referencie corretamente o nome da imagem.
 
+O Dataset para Rotular encontra-se em: https://drive.google.com/drive/folders/1iigDLVXJ5WPgMsnjH5Foijmr19qTwuyg. 
+
+**Importante:** Caso queira aproveitar o dataset já rotulado, com rotulação feita pelos alunos do Curso de Pós em IA aplicada do IFG/2025 já no formato correto, basta baixar o conteúdo de https://drive.google.com/drive/folders/1xfU7Yl_DH9hYd36IT5RfJ1Quhm8ijZr8 e colocá-lo na pasta dados/raw/dataset_keypoints.
+
+---
+
+
 ### dataset_classificacao
 ```text
 dados/raw/dataset_classificacao/
@@ -145,6 +152,8 @@ dados/raw/dataset_classificacao/
 - Cada subpasta em `dataset_classificacao` representa **uma vaca** (ID/classe), e as imagens dentro dela são fotos dessa mesma vaca.
 - ~50 imagens por vaca.
 - Split 90/10 por vaca.
+
+O dataset pode ser baixado em: https://drive.google.com/drive/folders/18bdtA7IN0lv84v6bTDopfJtCb2lFDPuH. Basta colocar seu conteúdo em dados/raw/dataset_classificacao.
 
 ---
 
