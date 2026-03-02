@@ -786,9 +786,8 @@ Com rejeição (`confianca_min=0.50`):
 - `accuracy_aceitas`: **0.6408**
 - `f1_macro_aceitas`: **0.6246**
 
-Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
 
-## Resultados alcançados (Execução com dataset parcial - 1029 imagens - dataset completo - mlp_torch)
+## Resultados alcançados (Execução com dataset completo - 1029 imagens -  mlp_torch)
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**
@@ -810,7 +809,6 @@ Com rejeição (`confianca_min=0.50`):
 - `accuracy_aceitas`: **0.6320**
 - `f1_macro_aceitas`: **0.6176**
 
-Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
 
 ## Nota sobre os resultados obtidos:
 
