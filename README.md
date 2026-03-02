@@ -788,9 +788,33 @@ Com rejeição (`confianca_min=0.50`):
 
 Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
 
-### Nota sobre os resultados obtidos:
+## Resultados alcançados (Execução com dataset parcial - 1029 imagens - dataset completo - mlp_torch)
 
-Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 81% (o animal correto estava entre os 3 melhores classificados em mais de 81% dos casos), é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore.
+Métricas de Pose (YOLO):
+- `k_folds`: **5**
+- `Box_mAP50` (média dos folds): **0.9948**
+- `Box_mAP50-95` (média dos folds): **0.9018**
+- `Pose_mAP50` (média dos folds): **0.9948 **
+- `Pose_mAP50-95` (média dos folds): **0.9128**
+- `Pose_mAP50-95` (melhor fold): **0.9218** (fold 2)
+
+Métricas no teste final:
+- `accuracy`: **0.5667**
+- `f1_macro`: **0.5631**
+- `top1_accuracy`: **0.5667**
+- `top3_accuracy`: **0.7667**
+- `top5_accuracy`: **0.8467**
+
+Com rejeição (`confianca_min=0.50`):
+- `cobertura`: **0.8333**
+- `accuracy_aceitas`: **0.6320**
+- `f1_macro_aceitas`: **0.6176**
+
+Valores extraídos de `metricas_pose.json` e `metricas_classificacao.json` da última execução.
+
+## Nota sobre os resultados obtidos:
+
+Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 76%, é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. (Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top3 > 76% quer dizer que em mais de 76% dos casos o animal correto estava entre os 3 mais bem classificados da lista)
 
 Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no exercício, a identificação exclusiva pelos keypoints.
 
