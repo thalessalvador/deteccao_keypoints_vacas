@@ -148,20 +148,6 @@ dados/raw/dataset_classificacao/
 
 ---
 
-## Formato YOLO Pose gerado
-- Saída: `dados/processados/yolo_pose/images` e `labels`.
-- O arquivo `dados/processados/yolo_pose/dataset.yaml` inclui `kpt_shape: [8, 3]`, que define:
-  - `8` keypoints por vaca;
-  - `3` valores por keypoint no label: `x`, `y`, `v` (visibilidade).
-- Uma linha por vaca/instância:
-```text
-0 xc yc w h k1x k1y k1v ... k8x k8y k8v
-```
-- `v`: 2 (keypoint presente), 0 (inexistente).  
-  *(No pipeline atual, keypoints anotados são exportados como presentes e keypoints ausentes como inexistentes.)*
-
----
-
 ## Configuração
 Edite `config/config.yaml`.
 
@@ -207,6 +193,108 @@ Parâmetros mais críticos (referência rápida):
 | `classificacao.augmentacao_keypoints.n_copias` | Volume de dados sintéticos de treino | `10` |
 | `classificacao.augmentacao_keypoints.noise_std_xy` | Intensidade do ruído nos keypoints | `0.004` |
 | `classificacao.rejeicao_predicao.confianca_min` | Limiar para aceitar/rejeitar predição | `0.50` |
+
+
+---
+
+## Uso via CLI
+
+O script `src/cli.py` é o ponto central de execução.
+
+**Nota sobre Configuração:**
+O argumento `--config` é **global e opcional**. Se não informado, usa `config/config.yaml`.
+Para usar outro arquivo, passe-o **antes** do subcomando:
+```bash
+python -m src.cli --config meu_config.yaml <COMANDO>
+```
+
+### Comandos Disponíveis
+
+#### 1. Pré-processamento (Fase 1)
+Converte anotações do Label Studio (JSON) para formato YOLO Pose e cria `dataset.yaml`:
+```bash
+python -m src.cli preprocessar-pose
+```
+
+#### 2. Treinar Pose (Fase 1)
+Inicia o treinamento do YOLO Pose (usando k-fold ou split simples definido no config):
+```bash
+python -m src.cli treinar-pose
+```
+
+#### 3. Inferir Pose (Teste Fase 1)
+Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar
+```
+*A saída será salva em `saidas/inferencias/imagens_plotadas`.*
+
+Para inspecionar o augmentation gaussiano de keypoints na mesma imagem:
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao
+```
+
+Para controlar quantas cópias ruidosas desenhar no preview:
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao --aug-copias 30
+```
+
+Esse modo salva um arquivo `<nome>_aug_preview.<ext>` em `saidas/inferencias/imagens_plotadas`,
+com keypoints originais e as variações geradas por ruído gaussiano.
+
+Exemplo completo (esqueleto + preview de augmentação na mesma execução):
+```bash
+python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar --desenhar-augmentacao --aug-copias 30
+```
+
+#### 4. Gerar Features (Fase 2)
+Processa todas as imagens de `dataset_classificacao`, extrai keypoints e calcula as features geométricas (CSV):
+```bash
+python -m src.cli gerar-features
+```
+
+#### 5. Treinar Classificador (Fase 3)
+Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib`, `mlp_model.joblib`, `mlp_torch_model.pt` + `mlp_torch_scaler.joblib` ou `siamese_torch_model.pt` + `siamese_torch_scaler.joblib`, além do encoder):
+```bash
+python -m src.cli treinar-classificador
+```
+
+#### 6. Avaliar Classificador (Fase 3)
+Avalia o modelo treinado no conjunto de teste (10% isolado por vaca) e gera matriz de confusão:
+```bash
+python -m src.cli avaliar-classificador
+```
+
+#### 7. Classificar Imagem (End-to-End)
+Executa o fluxo completo para uma nova imagem:
+1. Detecta pose (YOLO).
+2. Extrai features.
+3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch` ou `siamese_torch`).
+```bash
+python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
+```
+*Gera JSON com probabilidades e salva imagem com predição.*
+
+> **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os **nomes dos arquivos** (`arquivo.jpg`) reservados para teste.
+
+#### 8. Pipeline Completo
+Executa as etapas de pipeline de treino/avaliação em sequência (útil para reprodução total):
+```bash
+python -m src.cli pipeline-completo
+```
+Inclui:
+- `preprocessar-pose`
+- `treinar-pose`
+- `gerar-features`
+- `treinar-classificador`
+- `avaliar-classificador`
+
+Não inclui:
+- `inferir-pose`
+- `classificar-imagem`
+
+Estas últimas, por não fazerem parte do pipeline principal, precisam ser acionadas manualmente, por comandos CLI já descritos acima.
+
 
 ---
 
@@ -274,6 +362,19 @@ Os arquivos auxiliares de split ficam em `dados/processados/yolo_pose/splits` e 
   - imagem com keypoints: `saidas/inferencias/imagens_plotadas/<nome_imagem>`;
   - preview de augmentação: `saidas/inferencias/imagens_plotadas/<nome_imagem>_aug_preview.<ext>`.
 - Seleção de modelo para inferência (`inferir-pose`): 1) `metricas_pose.json` (`melhor_modelo.path`), 2) `best.pt` mais recente em `modelos/pose/runs`, 3) `pose.model_name` do `config.yaml`.
+
+### Formato YOLO Pose gerado
+- Saída: `dados/processados/yolo_pose/images` e `labels`.
+- O arquivo `dados/processados/yolo_pose/dataset.yaml` inclui `kpt_shape: [8, 3]`, que define:
+  - `8` keypoints por vaca;
+  - `3` valores por keypoint no label: `x`, `y`, `v` (visibilidade).
+- Uma linha por vaca/instância:
+```text
+0 xc yc w h k1x k1y k1v ... k8x k8y k8v
+```
+- `v`: 2 (keypoint presente), 0 (inexistente).  
+  *(No pipeline atual, keypoints anotados são exportados como presentes e keypoints ausentes como inexistentes.)*
+
 
 ### Data augmentation (YOLO nativo)
 A Fase 1 utiliza augmentations nativas do Ultralytics/YOLO (sem Albumentations).
@@ -649,109 +750,10 @@ Observação:
   - `saidas/relatorios/confianca_corretas_vs_incorretas.png`
   - `saidas/relatorios/cobertura_vs_acuracia.png`
 
----
-
-## Uso via CLI
-
-O script `src/cli.py` é o ponto central de execução.
-
-**Nota sobre Configuração:**
-O argumento `--config` é **global e opcional**. Se não informado, usa `config/config.yaml`.
-Para usar outro arquivo, passe-o **antes** do subcomando:
-```bash
-python -m src.cli --config meu_config.yaml <COMANDO>
-```
-
-### Comandos Disponíveis
-
-#### 1. Pré-processamento (Fase 1)
-Converte anotações do Label Studio (JSON) para formato YOLO Pose e cria `dataset.yaml`:
-```bash
-python -m src.cli preprocessar-pose
-```
-
-#### 2. Treinar Pose (Fase 1)
-Inicia o treinamento do YOLO Pose (usando k-fold ou split simples definido no config):
-```bash
-python -m src.cli treinar-pose
-```
-
-#### 3. Inferir Pose (Teste Fase 1)
-Roda o modelo de pose em uma imagem e opcionalmente desenha o esqueleto:
-```bash
-python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar
-```
-*A saída será salva em `saidas/inferencias/imagens_plotadas`.*
-
-Para inspecionar o augmentation gaussiano de keypoints na mesma imagem:
-```bash
-python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao
-```
-
-Para controlar quantas cópias ruidosas desenhar no preview:
-```bash
-python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar-augmentacao --aug-copias 30
-```
-
-Esse modo salva um arquivo `<nome>_aug_preview.<ext>` em `saidas/inferencias/imagens_plotadas`,
-com keypoints originais e as variações geradas por ruído gaussiano.
-
-Exemplo completo (esqueleto + preview de augmentação na mesma execução):
-```bash
-python -m src.cli inferir-pose --imagem "caminho/para/imagem.jpg" --desenhar --desenhar-augmentacao --aug-copias 30
-```
-
-#### 4. Gerar Features (Fase 2)
-Processa todas as imagens de `dataset_classificacao`, extrai keypoints e calcula as features geométricas (CSV):
-```bash
-python -m src.cli gerar-features
-```
-
-#### 5. Treinar Classificador (Fase 3)
-Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib`, `mlp_model.joblib`, `mlp_torch_model.pt` + `mlp_torch_scaler.joblib` ou `siamese_torch_model.pt` + `siamese_torch_scaler.joblib`, além do encoder):
-```bash
-python -m src.cli treinar-classificador
-```
-
-#### 6. Avaliar Classificador (Fase 3)
-Avalia o modelo treinado no conjunto de teste (10% isolado por vaca) e gera matriz de confusão:
-```bash
-python -m src.cli avaliar-classificador
-```
-
-#### 7. Classificar Imagem (End-to-End)
-Executa o fluxo completo para uma nova imagem:
-1. Detecta pose (YOLO).
-2. Extrai features.
-3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch` ou `siamese_torch`).
-```bash
-python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
-```
-*Gera JSON com probabilidades e salva imagem com predição.*
-
-> **Importante:** Para evitar vazamento de dados (avaliar uma imagem que o modelo já viu no treino), utilize imagens listadas em `dados/processados/classificacao/splits/teste_10pct.txt`. Este arquivo contém os **nomes dos arquivos** (`arquivo.jpg`) reservados para teste.
-
-#### 8. Pipeline Completo
-Executa as etapas de pipeline de treino/avaliação em sequência (útil para reprodução total):
-```bash
-python -m src.cli pipeline-completo
-```
-Inclui:
-- `preprocessar-pose`
-- `treinar-pose`
-- `gerar-features`
-- `treinar-classificador`
-- `avaliar-classificador`
-
-Não inclui:
-- `inferir-pose`
-- `classificar-imagem`
-
-Estas últimas, por não fazerem parte do pipeline principal, precisam ser acionadas manualmente, por comandos CLI já descritos acima.
 
 ---
 
-## Resultados alcançados (última execução - mlp_torch)
+## Resultados alcançados (Execução com dataset parcial - 984 imagens (as anotadas até 2026-02-28 15:08:08) -  mlp_torch)
 
 Métricas de Pose (YOLO):
 - `k_folds`: **5**

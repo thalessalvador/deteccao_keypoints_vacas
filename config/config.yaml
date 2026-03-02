@@ -3,7 +3,7 @@ pose:
   imgsz: 640 # Tamanho da imagem de entrada do YOLO (quadrada)
   batch: 16 # Tamanho do lote por iteracao
   workers: 8 # Numero de processos de carregamento de dados (CPU/I/O). Teste 8, 12 e 16.
-  cache: false # Cache do dataset: false | ram | disk. "ram" acelera leitura se houver memoria.
+  cache: ram # Cache do dataset: false | ram | disk. "ram" acelera leitura se houver memoria.
   amp: true # Precision mista na GPU (mais rapido e menor uso de VRAM)
   epochs: 200 # Numero maximo de epocas
   patience: 50 # Paciencia do early stopping (epocas sem melhora)
@@ -53,7 +53,7 @@ classificacao:
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
     habilitar: true # Ativa augmentation em keypoints (alem da flag global acima)
-    n_copias: 10 # Quantas copias sinteticas gerar por instancia real de treino
+    n_copias: 5 # Quantas copias sinteticas gerar por instancia real de treino
     noise_std_xy: 0.004 # Intensidade do ruido gaussiano em XY (escala relativa ao bbox)
     conf_min_keypoint: 0.01 # So aplica ruido em keypoints com confianca >= este valor
     clip_coords: true # Limita coordenadas para dentro da imagem apos ruido
