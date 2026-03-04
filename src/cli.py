@@ -14,6 +14,7 @@ from .keypoints.inferencia_pose import inferir_keypoints_em_imagem
 from .classificacao.gerador_dataset_features import gerar_dataset_features
 from .classificacao.treino_classificador import treinar_classificador
 from .classificacao.avaliacao_classificador import avaliar_classificador
+from .analise_features.analise_exploratoria import analisar_features_exploratorio
 
 
 def _remover_arquivo_ou_pasta(caminho: Path, logger: logging.Logger) -> None:
@@ -201,6 +202,9 @@ def main() -> None:
 
     # 9. Pipeline Completo
     cmd_pipe = subparsers.add_parser("pipeline-completo", help="Roda pipeline completo")
+    
+    # 10. Analise de Features (EDA)
+    cmd_eda = subparsers.add_parser("analisar-features", help="Roda EDA das features de classificacao")
 
     args = parser.parse_args()
     
@@ -258,6 +262,9 @@ def main() -> None:
         # Fase 3
         run_treinar_classificador(config, logger)
         run_avaliar_classificador(config, logger)
+    
+    elif args.comando == "analisar-features":
+        run_analisar_features(config, logger)
         
     else:
         parser.print_help()
@@ -431,6 +438,19 @@ def run_gerar_features(config: dict, logger: logging.Logger) -> Path:
     """
     out_csv = gerar_dataset_features(config, logger)
     return out_csv
+
+def run_analisar_features(config: dict, logger: logging.Logger) -> Path:
+    """
+    run_analisar_features: Executa analise exploratoria de features da classificacao.
+
+    Args:
+        config (dict): Dicionario de configuracao.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        Path: Caminho do relatorio markdown gerado.
+    """
+    return analisar_features_exploratorio(config, logger)
 
 def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bool, logger: logging.Logger) -> None:
     """

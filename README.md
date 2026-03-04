@@ -323,6 +323,14 @@ Não inclui:
 
 Estas últimas, por não fazerem parte do pipeline principal, precisam ser acionadas manualmente, por comandos CLI já descritos acima.
 
+#### 9. Análise Exploratoria de Features (EDA)
+Executa uma analise descritiva do dataset de features, fora do pipeline principal:
+```bash
+python -m src.cli analisar-features
+```
+Saidas em `saidas/analise_features/` (graficos, CSVs e `relatorio_eda.md`).
+Guia detalhado em [docs/analise_features.md](docs/analise_features.md).
+
 
 ---
 
@@ -450,6 +458,8 @@ Recomendações:
 - `mosaic/mixup` moderados
 
 ## Fase 2 - Geração de features (CSV)
+
+Guia complementar da EDA desta fase: [docs/analise_features.md](docs/analise_features.md).
 
 ### Visão geral do pipeline da Fase 2
 A Fase 2 transforma imagens do `dataset_classificacao` em um dataset tabular para treino da identificação.

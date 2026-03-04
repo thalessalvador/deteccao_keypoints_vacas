@@ -1,5 +1,5 @@
-pose:
-  model_name: "yolo26s-pose.pt" # Modelo base pretreinado para inicializar o treino de pose
+﻿pose:
+  model_name: "yolo26n-pose.pt" # Modelo base pretreinado para inicializar o treino de pose
   imgsz: 640 # Tamanho da imagem de entrada do YOLO (quadrada)
   batch: 16 # Tamanho do lote por iteracao
   workers: 8 # Numero de processos de carregamento de dados (CPU/I/O). Teste 8, 12 e 16.
@@ -22,7 +22,7 @@ pose:
   #
   # - "groupkfold_por_anotador":
   #   GroupKFold agrupando por um proxy de "origem/anotador" (prefixo do nome + camera).
-  #   Mais restritivo: separa por origem de anotacao para reduzir viés de anotador/lote.
+  #   Mais restritivo: separa por origem de anotacao para reduzir viÃ©s de anotador/lote.
   #   Pode reduzir metricas de validacao, mas deixa o teste mais robusto.
   #
   # Observacoes:
@@ -92,7 +92,7 @@ classificacao:
     rotulo_nao_identificado: "NAO_IDENTIFICADO"
   validacao_interna:
     fracao: 0.2 # Fracao usada como validacao interna DENTRO do treino externo (ex.: 0.2 => 20% do bloco de treino)
-    early_stopping_rounds: 50 # Paciência para parar treino de modelos que suportam early stopping
+    early_stopping_rounds: 50 # PaciÃªncia para parar treino de modelos que suportam early stopping
     usar_apenas_real: true # Se true, validacao interna usa apenas origem_instancia=real
   # Hiperparametros base do XGBoost (usados diretamente quando otimizacao_hiperparametros.habilitar=false)
   xgboost:
@@ -150,7 +150,7 @@ classificacao:
     max_iter: 400 # Maximo de epocas/iteracoes
     early_stopping: true # Para treino antes se nao houver melhora interna
     validation_fraction: 0.1 # Fracao interna usada pelo proprio MLP para early stopping
-    n_iter_no_change: 30 # Paciência do early stopping interno do MLP
+    n_iter_no_change: 30 # PaciÃªncia do early stopping interno do MLP
     random_state: 42 # Semente para reprodutibilidade
   # Hiperparametros base do MLP em PyTorch (GPU por padrao quando disponivel)
   mlp_torch:
@@ -198,57 +198,29 @@ classificacao:
     # Ordem de importancia (gain) do ultimo treino com todas as features.
     # Descomentados ativos; restante comentado para liberar um a um.
     selecionadas:
-      - "dist_hip_tail_head" # Distancia quadril-cauda (comprimento posterior)
-      - "dist_tail_head_pin_up" # Distancia cauda-pin_up
-      - "razao_dist_back_hip_por_dist_hip_hook_up" # Proporcao dorso/quadril para hook_up
-      - "pca_excentricidade" # Alongamento global da nuvem de keypoints (PCA)
-      - "sc_pin_up_y" # Shape-context Y do pin_up no referencial withers->tail_head
-      - "angulo_hook_up_pin_up_tail_head" # Angulo hook_up-pin_up-tail_head
-      - "angulo_hook_up_hip_tail_head" # Angulo hook_up-hip-tail_head
-      - "sc_hook_up_y" # Shape-context Y do hook_up
-      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up" # Proporcao entre segmentos do quadril superior
-      - "angulo_hook_up_back_hook_down" # Angulo hook_up-back-hook_down
-      - "sc_back_y" # Shape-context Y do back
-      - "angulo_pin_up_hip_pin_down" # Abertura pin_up-hip-pin_down
-      - "sc_back_x" # Shape-context X do back
-      - "dist_back_hook_up" # Distancia back-hook_up
-      - "sc_hip_y" # Shape-context Y do hip
-      - "area_poligono_pelvico_norm" # Area pelvica normalizada pelo bbox
-      - "sc_hook_down_y" # Shape-context Y do hook_down
-      - "sc_hook_up_x" # Shape-context X do hook_up
-      - "sc_pin_up_x" # Shape-context X do pin_up    
-      - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down" # Proporcao entre segmentos do quadril inferior
-      - "razao_dist_hip_tail_head_por_dist_hook_down_pin_down" # Proporcao quadril-cauda vs base inferior
-      - "razao_dist_hip_tail_head_por_dist_hook_up_pin_up" # Proporcao quadril-cauda vs base superior
-      - "razao_dist_hip_hook_up_por_dist_hip_tail_head" # Proporcao hook_up em relacao ao eixo hip-tail_head
-      # - "bbox_aspect_ratio" # Razao largura/altura do bbox da vaca (desativada para reduzir vies de perspectiva)
-      # - "bbox_area_norm" # Area do bbox normalizada pela area da imagem (desativada para reduzir vies de perspectiva)
-      # - "razao_dist_hip_hook_down_por_dist_hip_tail_head" # Proporcao hook_down em relacao ao eixo hip-tail_head
-      # - "razao_dist_back_hip_por_dist_hip_tail_head" # Proporcao tronco traseiro no eixo longitudinal
-      # - "razao_dist_back_hip_por_dist_hip_hook_down" # Proporcao back-hip vs hip-hook_down
-      # - "razao_dist_back_hip_por_dist_hip_pin_up" # Proporcao back-hip vs hip-pin_up
-      # - "razao_dist_back_hip_por_dist_hip_pin_down" # Proporcao back-hip vs hip-pin_down
-      # - "razao_largura_hooks_por_largura_pins" # Largura entre hooks dividida pela largura entre pins
-      # - "angulo_hook_up_hip_hook_down" # Abertura pelvica no quadril
-      # - "angulo_hip_hook_up_pin_up" # Angulo lateral superior da pelve
-      # - "angulo_hip_hook_down_pin_down" # Angulo lateral inferior da pelve
-      # - "angulo_hook_down_hip_tail_head" # Angulo hook_down-hip-tail_head
-      # - "angulo_pin_up_tail_head_pin_down" # Abertura na regiao da cauda entre pins
-      # - "angulo_withers_back_tail_head" # Angulo da linha dorsal (withers-back-tail_head)
-      # - "area_triangulo_torax_norm" # Area toracica normalizada
-      # - "indice_robustez" # Largura de hooks / comprimento withers-tail_head
-      # - "indice_triangulo_traseiro" # Area do triangulo hip-pin_up-pin_down normalizada
-      # - "desvio_coluna_back_norm" # Desvio perpendicular de back na linha withers-tail_head
-      # - "desvio_coluna_hip_norm" # Desvio perpendicular de hip na linha withers-tail_head
-      # - "sc_withers_x" # Shape-context X do withers
-      # - "sc_withers_y" # Shape-context Y do withers
-      # - "sc_hook_down_x" # Shape-context X do hook_down
-      # - "sc_hip_x" # Shape-context X do hip
-      # - "sc_tail_head_x" # Shape-context X do tail_head
-      # - "sc_tail_head_y" # Shape-context Y do tail_head
-      # - "sc_pin_down_x" # Shape-context X do pin_down
-      # - "sc_pin_down_y" # Shape-context Y do pin_down
-
+      - "bbox_aspect_ratio"
+      - "sc_hook_up_y"
+      - "pca_excentricidade"
+      - "dist_tail_head_pin_up"
+      - "indice_robustez"
+      - "dist_back_hook_up"
+      - "dist_hip_tail_head"
+      - "razao_dist_hip_hook_up_por_dist_hook_up_pin_up"
+      - "razao_dist_back_hip_por_dist_hip_hook_up"
+      - "sc_pin_up_y"
+      - "sc_back_y"
+      - "sc_hook_down_y"
+      - "angulo_hook_up_back_hook_down"
+      - "sc_hook_down_x"
+      - "sc_hip_y"
+      - "sc_pin_up_x"
+      - "angulo_hook_up_pin_up_tail_head"
+      - "area_poligono_pelvico_norm"
+      - "bbox_area_norm"
+      - "razao_dist_hip_hook_down_por_dist_hook_down_pin_down"
+      - "area_triangulo_torax_norm"
+      - "sc_hook_up_x"
+      - "razao_dist_back_hip_por_dist_hip_pin_up"
 paths:
   raw: "dados/raw"
   processed: "dados/processados"
