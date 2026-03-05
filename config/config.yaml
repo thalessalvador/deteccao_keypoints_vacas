@@ -1,9 +1,9 @@
 pose:
-  model_name: "yolo26s-pose.pt" # Modelo base pretreinado para inicializar o treino de pose
+  model_name: "yolo26n-pose.pt" # Modelo base pretreinado para inicializar o treino de pose
   imgsz: 640 # Tamanho da imagem de entrada do YOLO (quadrada)
   batch: 16 # Tamanho do lote por iteracao
-  workers: 8 # Numero de processos de carregamento de dados (CPU/I/O). Teste 8, 12 e 16.
-  cache: ram # Cache do dataset: false | ram | disk. "ram" acelera leitura se houver memoria.
+  workers: 10 # Numero de processos de carregamento de dados (CPU/I/O). Teste 8, 12 e 16.
+  cache: false # Cache do dataset: false | ram | disk. "ram" acelera leitura se houver memoria.
   amp: true # Precision mista na GPU (mais rapido e menor uso de VRAM)
   epochs: 200 # Numero maximo de epocas
   patience: 50 # Paciencia do early stopping (epocas sem melhora)
