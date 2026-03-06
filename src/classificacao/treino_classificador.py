@@ -15,6 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.pipeline import Pipeline
@@ -148,6 +149,8 @@ def treinar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Pat
         return _treinar_rf(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     elif model_type == "svm":
         return _treinar_svm(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
+    elif model_type == "knn":
+        return _treinar_knn(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     elif model_type == "mlp":
         return _treinar_mlp(X, y, groups, origem_instancia, cls_config, models_dir, reports_dir, logger)
     elif model_type == "mlp_torch":
@@ -1678,6 +1681,192 @@ def _treinar_svm(
 
     metrics = {
         "modelo": "svm",
+        "hiperparametros_usados": params_finais,
+        "otimizacao_hiperparametros": resumo_otimizacao,
+        "internal_validation": {"accuracy": acc, "f1_macro": f1},
+        "classification_report": classification_report(y_val, preds, output_dict=True, zero_division=0),
+    }
+    with open(reports_dir / "metricas_classificacao_treino.json", 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2)
+    return model_path
+
+
+def _treinar_knn(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    origem_instancia: np.ndarray,
+    config_cls: Dict[str, Any],
+    models_dir: Path,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Path:
+    """
+    Treina KNN (KNeighborsClassifier) com split interno por grupos.
+    Usa StandardScaler no pipeline e suporta Optuna/random search.
+
+    Parametros:
+        X (pd.DataFrame): Features completas.
+        y (np.ndarray): Rotulos.
+        groups (np.ndarray): Grupos para split sem vazamento.
+        origem_instancia (np.ndarray): Origem da amostra (real/augmentada).
+        config_cls (Dict[str, Any]): Configuracoes da classificacao.
+        models_dir (Path): Diretorio de saida de modelos.
+        reports_dir (Path): Diretorio de saida de relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Path: Caminho do modelo salvo.
+    """
+    logger.info("Treinando KNN...")
+    cfg_knn = config_cls.get("knn", {})
+    params_base = {
+        "n_neighbors": int(cfg_knn.get("n_neighbors", 7)),
+        "weights": str(cfg_knn.get("weights", "distance")),
+        "metric": str(cfg_knn.get("metric", "minkowski")),
+        "p": int(cfg_knn.get("p", 2)),
+        "leaf_size": int(cfg_knn.get("leaf_size", 30)),
+        "n_jobs": int(cfg_knn.get("n_jobs", -1)),
+    }
+
+    X_train, X_val, y_train, y_val = _preparar_split_interno_com_grupos(
+        X=X,
+        y=y,
+        groups=groups,
+        origem_instancia=origem_instancia,
+        config_cls=config_cls,
+        logger=logger,
+    )
+
+    params_finais = dict(params_base)
+    cfg_otimizacao = config_cls.get("otimizacao_hiperparametros", {})
+    resumo_otimizacao: Optional[Dict[str, Any]] = None
+    if bool(cfg_otimizacao.get("habilitar", False)):
+        metodo = str(cfg_otimizacao.get("metodo", "optuna")).lower()
+        n_trials = int(cfg_otimizacao.get("n_trials", 40))
+        seed = int(cfg_otimizacao.get("seed", 42))
+        timeout_segundos = cfg_otimizacao.get("timeout_segundos")
+        historico_trials: List[Dict[str, Any]] = []
+
+        def _avaliar_trial(params_trial: Dict[str, Any]) -> float:
+            params_local = dict(params_base)
+            params_local.update(params_trial)
+            if params_local.get("metric") != "minkowski":
+                params_local.pop("p", None)
+            clf_trial = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    ("knn", KNeighborsClassifier(**params_local)),
+                ]
+            )
+            clf_trial.fit(X_train, y_train)
+            preds_val = clf_trial.predict(X_val)
+            return float(f1_score(y_val, preds_val, average="macro", zero_division=0))
+
+        if metodo == "optuna":
+            try:
+                import optuna  # type: ignore
+                logger.info(f"Iniciando otimizacao de hiperparametros KNN com Optuna ({n_trials} trials)...")
+                sampler = optuna.samplers.TPESampler(seed=seed)
+                estudo = optuna.create_study(direction="maximize", sampler=sampler)
+
+                def objetivo(trial: Any) -> float:
+                    metric = trial.suggest_categorical("metric", ["euclidean", "manhattan", "minkowski"])
+                    params_trial: Dict[str, Any] = {
+                        "n_neighbors": trial.suggest_int("n_neighbors", 1, 31, step=2),
+                        "weights": trial.suggest_categorical("weights", ["uniform", "distance"]),
+                        "metric": metric,
+                        "leaf_size": trial.suggest_int("leaf_size", 20, 60),
+                    }
+                    if metric == "minkowski":
+                        params_trial["p"] = trial.suggest_int("p", 1, 3)
+                    return _avaliar_trial(params_trial)
+
+                estudo.optimize(
+                    objetivo,
+                    n_trials=n_trials,
+                    timeout=(int(timeout_segundos) if timeout_segundos else None),
+                    show_progress_bar=False,
+                )
+                params_finais.update(dict(estudo.best_params))
+                resumo_otimizacao = {
+                    "habilitado": True,
+                    "metodo_solicitado": metodo,
+                    "metodo_executado": "optuna",
+                    "n_trials_solicitados": n_trials,
+                    "n_trials_executados": len(estudo.trials),
+                    "melhor_f1_macro": float(estudo.best_value),
+                    "historico_trials": [
+                        {"trial": int(t.number) + 1, "value": (None if t.value is None else float(t.value))}
+                        for t in estudo.trials
+                    ],
+                }
+            except Exception as exc:
+                logger.warning(f"Falha ao usar Optuna para KNN ({exc}). Fallback para random search.")
+                metodo = "random"
+
+        if metodo != "optuna":
+            logger.info(f"Iniciando otimizacao KNN com random search ({n_trials} trials)...")
+            gerador = np.random.default_rng(seed)
+            melhor_score = -1.0
+            melhor_params: Dict[str, Any] = {}
+            metricas = ["euclidean", "manhattan", "minkowski"]
+            for _ in range(n_trials):
+                metric = metricas[int(gerador.integers(0, len(metricas)))]
+                params_trial: Dict[str, Any] = {
+                    "n_neighbors": int(gerador.integers(1, 32)),
+                    "weights": ("distance" if gerador.random() < 0.5 else "uniform"),
+                    "metric": metric,
+                    "leaf_size": int(gerador.integers(20, 61)),
+                }
+                if metric == "minkowski":
+                    params_trial["p"] = int(gerador.integers(1, 4))
+                score = _avaliar_trial(params_trial)
+                if score > melhor_score:
+                    melhor_score = score
+                    melhor_params = params_trial
+                historico_trials.append({"trial": len(historico_trials) + 1, "value": float(score)})
+            params_finais.update(melhor_params)
+            resumo_otimizacao = {
+                "habilitado": True,
+                "metodo_solicitado": str(cfg_otimizacao.get("metodo", "random")),
+                "metodo_executado": "random_search",
+                "n_trials_solicitados": n_trials,
+                "n_trials_executados": n_trials,
+                "melhor_f1_macro": float(melhor_score),
+                "historico_trials": historico_trials,
+            }
+
+    if params_finais.get("metric") != "minkowski":
+        params_finais.pop("p", None)
+
+    clf = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("knn", KNeighborsClassifier(**params_finais)),
+        ]
+    )
+    clf.fit(X_train, y_train)
+    preds = clf.predict(X_val)
+    acc = accuracy_score(y_val, preds)
+    f1 = f1_score(y_val, preds, average="macro", zero_division=0)
+    logger.info(f"KNN Validacao Interna - Acuracia: {acc:.4f}, F1-Macro: {f1:.4f}")
+
+    model_path = models_dir / "knn_model.joblib"
+    joblib.dump(clf, model_path)
+    joblib.dump(list(X.columns), models_dir / "feature_names.pkl")
+    logger.info(f"Modelo salvo em {model_path}")
+
+    _salvar_grafico_otimizacao_generico(
+        resumo_otimizacao=resumo_otimizacao,
+        reports_dir=reports_dir,
+        nome_arquivo="knn_otimizacao_trials.png",
+        titulo="KNN - Evolucao dos Trials de Otimizacao",
+        logger=logger,
+    )
+
+    metrics = {
+        "modelo": "knn",
         "hiperparametros_usados": params_finais,
         "otimizacao_hiperparametros": resumo_otimizacao,
         "internal_validation": {"accuracy": acc, "f1_macro": f1},

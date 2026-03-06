@@ -94,6 +94,8 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         model_path_cls = cls_model_dir / "rf_model.joblib"
     elif model_type == "svm":
         model_path_cls = cls_model_dir / "svm_model.joblib"
+    elif model_type == "knn":
+        model_path_cls = cls_model_dir / "knn_model.joblib"
     elif model_type == "mlp":
         model_path_cls = cls_model_dir / "mlp_model.joblib"
     elif model_type == "mlp_torch":
@@ -125,7 +127,7 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
         from catboost import CatBoostClassifier
         clf = CatBoostClassifier()
         clf.load_model(str(model_path_cls))
-    elif model_type in ("sklearn_rf", "svm", "mlp"):
+    elif model_type in ("sklearn_rf", "svm", "knn", "mlp"):
         import joblib
         clf = joblib.load(model_path_cls)
     elif model_type == "mlp_torch":

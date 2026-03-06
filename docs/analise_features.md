@@ -1,50 +1,72 @@
-# Analise Exploratória de Dados (EDA)
+﻿# Analise Exploratoria de Dados (EDA)
 
-Este documento descreve como rodar a analise exploratoria das features da Fase 2
-sem alterar o pipeline principal de treino/inferencia.
+## Relatorio de Analise Exploratoria
 
-## Objetivo
+### 1. Visao geral do dataset
 
-Atender ao requisito de analise descritiva/exploratoria das features usadas na
-identificacao das vacas, com foco em:
+O conjunto de dados esta robusto para classificacao de 30 individuos (vacas),
+com boa cobertura de variacoes devido ao uso de augmentacao.
 
-- padroes de distribuicao;
-- qualidade dos dados (missing);
-- correlacoes e redundancia entre features;
-- separabilidade entre classes;
-- ranking de relevancia das features.
+- Volume de dados: **14945 amostras**
+- Classes: **30**
+- Features numericas: **50**
+- Estrategia de dados: **1495 instancias reais** e **13450 instancias aumentadas**
+- Split externo registrado no CSV: **14795 treino** e **150 teste**
 
-## Como executar
+Interpretacao: ha predominio de dados augmentados no treino, o que tende a
+melhorar robustez a variacoes de pose/ruido, desde que as transformacoes
+permaneçam biologicamente plausiveis.
 
-```bash
-python -m src.cli analisar-features
-```
+### 2. Qualidade e limpeza dos dados
 
-Pre-requisito:
+- Missing values: **0% em todas as features**
+- Features constantes detectadas: **sc_withers_x** e **sc_withers_y**
 
-- `dados/processados/classificacao/features/features_completas.csv` deve existir
-  (gerado por `python -m src.cli gerar-features`).
+Interpretacao: a qualidade tabular esta alta (sem lacunas). As features
+constantes nao trazem ganho discriminativo e podem permanecer desativadas no
+treino.
 
-## Saidas geradas
+### 3. Correlacao e redundancia
 
-Diretorio: `saidas/analise_features/`
+As correlacoes mais altas mostram redundancia geometrica relevante:
 
-- `relatorio_eda.md`
-- `resumo_eda.json`
-- `eda_distribuicao_classes.png`
-- `eda_missing_top25.png`
-- `eda_heatmap_correlacao.png`
-- `eda_top25_importancia.png`
-- `eda_pca_2d_top12.png`
-- `eda_missing_por_feature.csv`
-- `eda_correlacao.csv`
-- `eda_importancia_features.csv`
-- `eda_top_correlacoes.csv`
+- `angulo_withers_back_tail_head` x `desvio_coluna_back_norm`: **-0.9970**
+- `area_triangulo_torax_norm` x `desvio_coluna_back_norm`: **0.9659**
+- `area_poligono_pelvico_norm` x `indice_triangulo_traseiro`: **0.9573**
+- `indice_robustez` x `pca_excentricidade`: **-0.9351**
 
-## Interpretacao recomendada
+Interpretacao: varias features estao descrevendo o mesmo fenomeno morfologico
+por formulacoes diferentes. Isso e esperado em engenharia de features
+geometricas. Em modelos lineares, essa redundancia pode prejudicar; em modelos
+nao lineares, tende a ser menos critica.
 
-1. Comece por `eda_distribuicao_classes.png` para verificar balanceamento.
-2. Valide qualidade dos dados em `eda_missing_por_feature.csv`.
-3. Revise redundancias em `eda_heatmap_correlacao.png` e `eda_top_correlacoes.csv`.
-4. Use `eda_importancia_features.csv` para orientar ablation/selecionar features.
-5. Verifique separabilidade visual em `eda_pca_2d_top12.png`.
+### 4. Importancia das features (o que mais diferencia os individuos)
+
+Pelo ranking combinado (ANOVA + Mutual Information), as mais relevantes foram:
+
+1. `bbox_aspect_ratio`
+2. `sc_hook_up_y`
+3. `dist_tail_head_pin_up`
+4. `dist_back_hook_up`
+5. `pca_excentricidade`
+6. `razao_dist_hip_hook_up_por_dist_hook_up_pin_up`
+7. `dist_hip_tail_head`
+8. `indice_robustez`
+
+Interpretacao:
+
+- features de forma global (`bbox_aspect_ratio`, `pca_excentricidade`,
+  `indice_robustez`) aparecem forte;
+- medidas da regiao pelvica e dorsal seguem importantes;
+- coordenadas relativas no eixo Y (shape-context) contribuem para diferenciar
+  padrao morfologico individual.
+
+### 5. Padroes significativos e insights
+
+- A regiao traseira/pelvica concentra varias features relevantes, coerente com
+  variacao anatomica visivel entre animais.
+- O PCA 2D e util para inspeção visual, mas nao deve ser usado isoladamente
+  para concluir separabilidade completa entre 30 classes.
+- O conjunto atual sugere boa capacidade descritiva das features, com espaco
+  para enxugamento controlado (ablation) sem perder desempenho.
+

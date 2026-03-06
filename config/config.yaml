@@ -47,13 +47,13 @@ pose:
     erasing: 0.2 # Probabilidade de apagamento aleatorio (random erasing)
 
 classificacao:
-  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "mlp", "mlp_torch", "siamese_torch"
+  # Modelos suportados: "xgboost", "catboost", "sklearn_rf", "svm", "knn", "mlp", "mlp_torch", "siamese_torch"
   modelo_padrao: "mlp_torch"
   split_teste: 0.10 # Percentual de teste externo (caso real) por vaca
   usar_data_augmentation: true # Liga/desliga augmentation para classificacao
   augmentacao_keypoints:
     habilitar: true # Ativa augmentation em keypoints (alem da flag global acima)
-    n_copias: 5 # Quantas copias sinteticas gerar por instancia real de treino
+    n_copias: 10 # Quantas copias sinteticas gerar por instancia real de treino
     noise_std_xy: 0.004 # Intensidade do ruido gaussiano em XY (escala relativa ao bbox)
     conf_min_keypoint: 0.01 # So aplica ruido em keypoints com confianca >= este valor
     clip_coords: true # Limita coordenadas para dentro da imagem apos ruido
@@ -140,6 +140,14 @@ classificacao:
     degree: 3 # Usado quando kernel="poly"
     class_weight: null # null ou "balanced"
     random_state: 42 # Semente para reprodutibilidade
+  # Hiperparametros base do KNN (KNeighborsClassifier)
+  knn:
+    n_neighbors: 7 # Numero de vizinhos considerados
+    weights: "distance" # "uniform" ou "distance"
+    metric: "minkowski" # "euclidean", "manhattan" ou "minkowski"
+    p: 2 # Potencia da distancia quando metric="minkowski" (1=Manhattan, 2=Euclidiana)
+    leaf_size: 30 # Tamanho da folha para estruturas de busca (KDTree/BallTree)
+    n_jobs: -1 # Numero de threads no KNN (-1 usa todos os nucleos)
   # Hiperparametros base do MLP (sklearn.neural_network.MLPClassifier)
   mlp:
     hidden_layer_sizes: [128, 64] # Tamanho inicial das camadas ocultas (entrada/saida bem como numero de camadas e tamanho sao inferidos em tempo de execucao)
@@ -184,7 +192,7 @@ classificacao:
     min_delta: 0.0 # Melhora minima de F1 para resetar paciencia
     temperature: 0.15 # Temperatura usada na loss/probabilidades por similaridade
     seed: 42 # Semente para reproducao
-  # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest/SVM/MLP (menos forca bruta que busca em grade).
+  # Otimizacao de hiperparametros para XGBoost/CatBoost/RandomForest/SVM/KNN/MLP (menos forca bruta que busca em grade).
   # metodo:
   # - "optuna": TPE/Bayesiano (preferencial, requer optuna instalado)
   # - "random": busca aleatoria simples (contingencia)

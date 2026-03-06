@@ -867,6 +867,29 @@ Com rejeição (`confianca_min=0.50`):
 - `accuracy_aceitas`: **0.6099**
 - `f1_macro_aceitas`: **0.6117**
 
+## Resultados alcançados (Execução mais recente - mlp_torch - `classificacao.augmentacao_keypoints.n_copias: 10`)
+
+Métricas de Pose (YOLO):
+- `k_folds`: **5**
+- `Box_mAP50` (média dos folds): **0.9950**
+- `Box_mAP50-95` (média dos folds): **0.8896**
+- `Pose_mAP50` (média dos folds): **0.9950**
+- `Pose_mAP50-95` (média dos folds): **0.9062**
+- `Pose_mAP50-95` (melhor fold): **0.91618** (fold 3)
+
+Métricas no teste final:
+- `accuracy`: **0.5933**
+- `recall_macro`: **0.5933**
+- `f1_macro`: **0.5935**
+- `top1_accuracy`: **0.5933**
+- `top3_accuracy`: **0.8000**
+- `top5_accuracy`: **0.8667**
+
+Com rejeição (`confianca_min=0.50`):
+- `cobertura`: **0.9600**
+- `accuracy_aceitas`: **0.6111**
+- `f1_macro_aceitas`: **0.6130**
+
 
 ## Nota sobre os resultados obtidos:
 

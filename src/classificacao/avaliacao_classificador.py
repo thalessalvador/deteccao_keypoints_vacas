@@ -69,6 +69,8 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         model_path = models_dir / "rf_model.joblib"
     elif model_type == "svm":
         model_path = models_dir / "svm_model.joblib"
+    elif model_type == "knn":
+        model_path = models_dir / "knn_model.joblib"
     elif model_type == "mlp":
         model_path = models_dir / "mlp_model.joblib"
     elif model_type == "mlp_torch":
@@ -143,7 +145,7 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
         from catboost import CatBoostClassifier
         clf = CatBoostClassifier()
         clf.load_model(str(model_path))
-    elif model_type in ("sklearn_rf", "svm", "mlp"):
+    elif model_type in ("sklearn_rf", "svm", "knn", "mlp"):
         clf = joblib.load(model_path)
     elif model_type == "mlp_torch":
         clf = None
