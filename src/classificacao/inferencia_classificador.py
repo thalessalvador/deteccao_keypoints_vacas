@@ -297,11 +297,20 @@ def classificar_imagem_unica(config: Dict[str, Any], img_path: Path, top_k: int 
             cv2.putText(img, f"Pred: {classe_final} ({confianca:.1%})", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
-            # Listar Top 3
+            # Listar top-k (exclui top1, que ja aparece em "Pred")
             y = 70
+            line_height = 24
             for item in top_preds[1:]:
-                cv2.putText(img, f"{item['classe']}: {item['confianca']:.1%}", (10, y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+                cv2.putText(
+                    img,
+                    f"{item['classe']}: {item['confianca']:.1%}",
+                    (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 255),
+                    1,
+                )
+                y += line_height
             
             out_dir = Path(config["paths"]["outputs"]) / "inferencias" / "classificacao"
             garantir_diretorio(out_dir)

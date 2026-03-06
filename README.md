@@ -1,4 +1,4 @@
-﻿# Detecção de Vacas pelos Keypoints - Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF/SVM/MLP/MLP-Torch/Siamese-Torch)
+﻿# Detecção de Vacas pelos Keypoints - Pose (YOLO, yolo26n-pose) + Identificação (XGBoost/CatBoost/RF/SVM/KNN/MLP/MLP-Torch/Siamese-Torch)
 
 ## Visão geral
 ![Desafio do projeto de identificação de vacas](Cows_challenge.png)
@@ -12,7 +12,7 @@ Este repositório implementa um pipeline em 3 fases:
    Usa o modelo de pose para extrair keypoints do `dataset_classificacao` e gerar um CSV com features geométricas por imagem (90% de cada vaca).  
    Inclui **seleção robusta da instância-alvo** na imagem (para o caso de existir uma segunda vaca parcialmente no frame).
 
-3. **Fase 3 - Classificação da vaca (XGBoost/CatBoost/RF/SVM/MLP/MLP-Torch/Siamese-Torch)**  
+3. **Fase 3 - Classificação da vaca (XGBoost/CatBoost/RF/SVM/KNN/MLP/MLP-Torch/Siamese-Torch)**  
    Treina um classificador tabular configurável via `classificacao.modelo_padrao` e avalia no “caso real” (10%), gerando **matriz de confusão** e métricas globais. Também suporta inferência em imagem única com top-k.
 
 ---
@@ -194,7 +194,7 @@ Principais parâmetros (resumo prático):
 - `pose.usar_data_augmentation`: liga/desliga augmentations do YOLO.
 - `pose.augmentacao.*`: intensidades/probabilidades dos augmentations nativos (`hsv_*`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `fliplr`, `flipud`, `mosaic`, `mixup`, `erasing`).
 
-- `classificacao.modelo_padrao`: classificador tabular ativo (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch`, `siamese_torch`).
+- `classificacao.modelo_padrao`: classificador tabular ativo (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `knn`, `mlp`, `mlp_torch`, `siamese_torch`).
 - `classificacao.split_teste`: fração reservada para teste final externo por vaca (ex.: `0.10`).
 - `classificacao.features.selecionadas`: lista de features geométricas usadas no treino da classificação.
 - `classificacao.usar_data_augmentation`: liga/desliga augmentation da fase de features/classificação.
@@ -282,7 +282,7 @@ python -m src.cli gerar-features
 ```
 
 #### 5. Treinar Classificador (Fase 3)
-Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib`, `mlp_model.joblib`, `mlp_torch_model.pt` + `mlp_torch_scaler.joblib` ou `siamese_torch_model.pt` + `siamese_torch_scaler.joblib`, além do encoder):
+Treina o modelo definido em `classificacao.modelo_padrao` e salva os artefatos do classificador (`xgboost_model.json`, `catboost_model.cbm`, `rf_model.joblib`, `svm_model.joblib`, `knn_model.joblib`, `mlp_model.joblib`, `mlp_torch_model.pt` + `mlp_torch_scaler.joblib` ou `siamese_torch_model.pt` + `siamese_torch_scaler.joblib`, além do encoder):
 ```bash
 python -m src.cli treinar-classificador
 ```
@@ -297,7 +297,7 @@ python -m src.cli avaliar-classificador
 Executa o fluxo completo para uma nova imagem:
 1. Detecta pose (YOLO).
 2. Extrai features.
-3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch` ou `siamese_torch`).
+3. Classifica com o modelo definido em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `knn`, `mlp`, `mlp_torch` ou `siamese_torch`).
 ```bash
 python -m src.cli classificar-imagem --imagem "cam/para/img.jpg" --top-k 3 --desenhar
 ```
@@ -694,7 +694,7 @@ A Fase 3 treina o classificador final de identificação e mede desempenho em te
 
 Fluxo completo:
 1. **Entrada:** `dados/processados/classificacao/features/features_completas.csv` + splits em `dados/processados/classificacao/splits`.
-2. **Escolha do modelo:** definida em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `mlp`, `mlp_torch`, `siamese_torch`).
+2. **Escolha do modelo:** definida em `classificacao.modelo_padrao` (`xgboost`, `catboost`, `sklearn_rf`, `svm`, `knn`, `mlp`, `mlp_torch`, `siamese_torch`).
 3. **Treino externo:** usa apenas arquivos do `treino.txt`.
 4. **Validação interna:** cria split interno por grupo `arquivo` (`GroupShuffleSplit`) para tuning/early stopping, usando o campo `arquivo` do `features_completas.csv`.
 5. **Otimização de hiperparâmetros:** Optuna (ou random search de fallback) quando `classificacao.otimizacao_hiperparametros.habilitar=true`.
@@ -798,6 +798,7 @@ Observação:
   - `modelos/classificacao/modelos_salvos/catboost_model.cbm`
   - `modelos/classificacao/modelos_salvos/rf_model.joblib`
   - `modelos/classificacao/modelos_salvos/svm_model.joblib`
+  - `modelos/classificacao/modelos_salvos/knn_model.joblib`
   - `modelos/classificacao/modelos_salvos/mlp_model.joblib`
   - `modelos/classificacao/modelos_salvos/mlp_torch_model.pt`
   - `modelos/classificacao/modelos_salvos/mlp_torch_scaler.joblib`
@@ -805,7 +806,7 @@ Observação:
   - `modelos/classificacao/modelos_salvos/siamese_torch_scaler.joblib`
 - Relatórios de treino:
   - `saidas/relatorios/metricas_classificacao_treino.json`
-  - gráficos de otimização/importância por modelo (`xgb_*`, `catboost_*`, `rf_*`, `svm_*`, `mlp_*`, `mlp_torch_*`, `siamese_torch_*`)
+  - gráficos de otimização/importância por modelo (`xgb_*`, `catboost_*`, `rf_*`, `svm_*`, `knn_*`, `mlp_*`, `mlp_torch_*`, `siamese_torch_*`)
   - curvas do MLP final: `mlp_curva_loss_treino_validacao.png`, `mlp_curva_acuracia_treino_validacao.png`
   - curvas do MLP Torch final: `mlp_torch_curva_loss_treino_validacao.png`, `mlp_torch_curva_acuracia_treino_validacao.png`
   - curvas do Siamese Torch final: `siamese_torch_curva_loss_treino_validacao.png`, `siamese_torch_curva_metricas_validacao.png`
@@ -904,6 +905,7 @@ Uma possível melhora também poderia ser obtida, incluindo outras técnicas usa
 ## Reprodutibilidade
 - Seeds configuráveis em `config.yaml`.
 - Logs em `saidas/logs/app.log`.
+
 
 
 
