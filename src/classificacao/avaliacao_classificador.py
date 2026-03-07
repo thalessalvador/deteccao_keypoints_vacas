@@ -1,8 +1,9 @@
 import logging
 import json
+import re
 import joblib
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,6 +14,122 @@ import xgboost as xgb
 from ..util.io_arquivos import garantir_diretorio
 from .mlp_torch import carregar_checkpoint_mlp_torch, predict_proba_mlp_torch
 from .siamese_torch import carregar_checkpoint_siamese_torch, predict_proba_siamese_torch
+
+
+def _extrair_baia_camera(nome_arquivo: str) -> Tuple[str, str]:
+    """
+    Extrai baia e camera a partir do padrao do nome do arquivo.
+
+    Parametros:
+        nome_arquivo (str): Nome do arquivo de imagem.
+
+    Retorno:
+        Tuple[str, str]: (baia, camera), com fallback "desconhecida"/"desconhecida".
+    """
+    stem = Path(nome_arquivo).stem
+    partes = stem.split("_")
+    camera = partes[-1] if partes else "desconhecida"
+    match_baia = re.search(r"baia(\d+)", stem, flags=re.IGNORECASE)
+    baia = f"baia{match_baia.group(1)}" if match_baia else "desconhecida"
+    return baia, camera
+
+
+def _gerar_relatorio_erros_contexto(
+    arquivos: np.ndarray,
+    acertos: np.ndarray,
+    reports_dir: Path,
+    logger: logging.Logger,
+) -> Dict[str, Any]:
+    """
+    Gera relatorios de erro por baia e camera.
+
+    Parametros:
+        arquivos (np.ndarray): Nomes de arquivo das amostras avaliadas.
+        acertos (np.ndarray): Vetor booleano indicando acerto da predicao.
+        reports_dir (Path): Diretorio de saida dos relatorios.
+        logger (logging.Logger): Logger para mensagens.
+
+    Retorno:
+        Dict[str, Any]: Resumo serializavel com estatisticas agregadas.
+    """
+    if len(arquivos) == 0:
+        return {}
+
+    linhas = []
+    for arquivo, ok in zip(arquivos.tolist(), acertos.tolist()):
+        baia, camera = _extrair_baia_camera(str(arquivo))
+        linhas.append(
+            {
+                "arquivo": str(arquivo),
+                "baia": baia,
+                "camera": camera,
+                "acerto": bool(ok),
+                "erro": int(not bool(ok)),
+            }
+        )
+
+    df_ctx = pd.DataFrame(linhas)
+
+    def _agrupar(cols: List[str]) -> pd.DataFrame:
+        out = (
+            df_ctx.groupby(cols, dropna=False)
+            .agg(total=("erro", "count"), erros=("erro", "sum"))
+            .reset_index()
+        )
+        out["acuracia"] = 1.0 - (out["erros"] / out["total"])
+        out["taxa_erro"] = out["erros"] / out["total"]
+        return out.sort_values(["taxa_erro", "erros", "total"], ascending=[False, False, False])
+
+    por_baia = _agrupar(["baia"])
+    por_camera = _agrupar(["camera"])
+    por_baia_camera = _agrupar(["baia", "camera"])
+
+    por_baia.to_csv(reports_dir / "erros_por_baia.csv", index=False)
+    por_camera.to_csv(reports_dir / "erros_por_camera.csv", index=False)
+    por_baia_camera.to_csv(reports_dir / "erros_por_baia_camera.csv", index=False)
+
+    def _plot(df_in: pd.DataFrame, x_col: str, titulo: str, out_name: str) -> None:
+        dff = df_in[df_in["total"] >= 3].copy()
+        if dff.empty:
+            return
+        plt.figure(figsize=(10, 5))
+        sns.barplot(data=dff, x=x_col, y="taxa_erro", color="#d62728")
+        plt.title(titulo)
+        plt.xlabel(x_col.capitalize())
+        plt.ylabel("Taxa de erro")
+        plt.ylim(0, 1)
+        plt.xticks(rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(reports_dir / out_name)
+        plt.close()
+
+    _plot(por_baia, "baia", "Taxa de erro por baia", "erros_por_baia.png")
+    _plot(por_camera, "camera", "Taxa de erro por camera", "erros_por_camera.png")
+
+    if not por_baia.empty:
+        pior_baia = por_baia.iloc[0]
+        logger.info(
+            "Pior baia em erro: %s (taxa_erro=%.4f, erros=%d/%d)",
+            str(pior_baia["baia"]),
+            float(pior_baia["taxa_erro"]),
+            int(pior_baia["erros"]),
+            int(pior_baia["total"]),
+        )
+    if not por_camera.empty:
+        pior_camera = por_camera.iloc[0]
+        logger.info(
+            "Pior camera em erro: %s (taxa_erro=%.4f, erros=%d/%d)",
+            str(pior_camera["camera"]),
+            float(pior_camera["taxa_erro"]),
+            int(pior_camera["erros"]),
+            int(pior_camera["total"]),
+        )
+
+    return {
+        "por_baia_top10": por_baia.head(10).to_dict(orient="records"),
+        "por_camera_top10": por_camera.head(10).to_dict(orient="records"),
+        "por_baia_camera_top10": por_baia_camera.head(10).to_dict(orient="records"),
+    }
 
 
 def _ler_cfg_rejeicao_predicao(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -339,6 +456,13 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
     plt.tight_layout()
     plt.savefig(reports_dir / "cobertura_vs_acuracia.png")
     plt.close()
+
+    resumo_erros_contexto = _gerar_relatorio_erros_contexto(
+        arquivos=df_test["arquivo"].astype(str).values,
+        acertos=acertos,
+        reports_dir=reports_dir,
+        logger=logger,
+    )
     
     logger.info(f"Matriz de confusão salva em {reports_dir}")
     
@@ -361,6 +485,7 @@ def avaliar_classificador(config: Dict[str, Any], logger: logging.Logger) -> Non
             }
             for t, c, a in zip(thresholds, cobertura, acuracia_filtrada)
         ],
+        "erros_por_contexto": resumo_erros_contexto,
         "classification_report": report
     }
     

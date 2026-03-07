@@ -15,6 +15,7 @@ from .classificacao.gerador_dataset_features import gerar_dataset_features
 from .classificacao.treino_classificador import treinar_classificador
 from .classificacao.avaliacao_classificador import avaliar_classificador
 from .analise_features.analise_exploratoria import analisar_features_exploratorio
+from .fiftyone_tools.exporter import exportar_para_fiftyone
 
 
 def _remover_arquivo_ou_pasta(caminho: Path, logger: logging.Logger) -> None:
@@ -207,6 +208,21 @@ def main() -> None:
     # 10. Analise de Features (EDA)
     cmd_eda = subparsers.add_parser("analisar-features", help="Roda EDA das features de classificacao")
 
+    # 11. Exportar para FiftyOne
+    cmd_fo = subparsers.add_parser("exportar-fiftyone", help="Exporta datasets para inspecao no FiftyOne")
+    cmd_fo.add_argument(
+        "--modo",
+        type=str,
+        default="todos",
+        choices=["classificacao-teste", "classificacao-raw", "pose-anotacoes", "todos"],
+        help="Define qual tipo de analise exportar",
+    )
+    cmd_fo.add_argument(
+        "--launch",
+        action="store_true",
+        help="Abre a interface do FiftyOne ao final da exportacao",
+    )
+
     args = parser.parse_args()
     
     # Setup Logger e Config
@@ -266,6 +282,9 @@ def main() -> None:
     
     elif args.comando == "analisar-features":
         run_analisar_features(config, logger)
+
+    elif args.comando == "exportar-fiftyone":
+        run_exportar_fiftyone(config, args.modo, args.launch, logger)
         
     else:
         parser.print_help()
@@ -478,6 +497,23 @@ def run_classificar_imagem(config: dict, img_path: str, top_k: int, desenhar: bo
 
     resultado = classificar_imagem_unica(config, img_path, top_k, desenhar, logger)
     print(json.dumps(resultado, default=str, indent=2))
+
+
+def run_exportar_fiftyone(config: dict, modo: str, launch: bool, logger: logging.Logger) -> None:
+    """
+    run_exportar_fiftyone: Exporta datasets de auditoria para o FiftyOne.
+
+    Args:
+        config (dict): Dicionario de configuracao.
+        modo (str): Tipo de exportacao desejada.
+        launch (bool): Se True, abre o app do FiftyOne ao final.
+        logger (logging.Logger): Logger configurado.
+
+    Returns:
+        None: Cria datasets no FiftyOne e opcionalmente abre a interface.
+    """
+    logger.info("=== Exportacao para FiftyOne (%s) ===", modo)
+    exportar_para_fiftyone(config=config, modo=modo, launch=launch, logger=logger)
 
 if __name__ == "__main__":
     main()

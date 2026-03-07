@@ -27,6 +27,7 @@ Este repositório implementa um pipeline em 3 fases:
   - matplotlib, seaborn
   - pyyaml
   - xgboost / catboost (classificação tabular)
+  - fiftyone (auditoria visual de datasets e predições)
   - optuna (otimização de hiperparâmetros)
   - pydantic (validação de contratos/configuração)
   - tqdm (barra de progresso)
@@ -51,6 +52,11 @@ source .venv/bin/activate
 pip install -e .
 ```
 Isso instalará as dependências listadas no `pyproject.toml` e o próprio pacote `src` em modo editável.
+
+Para usar a auditoria visual no FiftyOne:
+```bash
+pip install fiftyone
+```
 
 ### 3) Configuração de GPU (CUDA) vs CPU
 Este projeto roda tanto em CPU quanto em GPU. Para usar GPU:
@@ -329,8 +335,27 @@ Executa uma analise descritiva do dataset de features, fora do pipeline principa
 python -m src.cli analisar-features
 ```
 Saidas em `saidas/analise_features/` (graficos, CSVs e `relatorio_eda.md`).
-Guia detalhado em [docs/analise_features.md](docs/analise_features.md).
 
+
+**ENTREGÁVEL: Relatório de Análise Exploratória de Dados (EDA) [docs/analise_features.md](docs/analise_features.md).**
+
+#### 10. Auditoria visual com FiftyOne (EDA visual)
+Permite inspeção visual em 3 frentes:
+1. `classificacao-teste`: GT x predição x confiança no split de teste.
+2. `classificacao-raw`: auditoria de imagens em `dataset_classificacao` (classe/pasta incorreta).
+3. `pose-anotacoes`: auditoria de bbox + keypoints do dataset YOLO processado.
+
+Comandos:
+```bash
+python -m src.cli exportar-fiftyone --modo classificacao-teste
+python -m src.cli exportar-fiftyone --modo classificacao-raw
+python -m src.cli exportar-fiftyone --modo pose-anotacoes
+```
+
+Exportar tudo e abrir app:
+```bash
+python -m src.cli exportar-fiftyone --modo todos --launch
+```
 
 ---
 
@@ -817,6 +842,12 @@ Observação:
   - `saidas/relatorios/metricas_por_classe.png`
   - `saidas/relatorios/confianca_corretas_vs_incorretas.png`
   - `saidas/relatorios/cobertura_vs_acuracia.png`
+  - análise de erro por contexto:
+    - `saidas/relatorios/erros_por_baia.csv`
+    - `saidas/relatorios/erros_por_camera.csv`
+    - `saidas/relatorios/erros_por_baia_camera.csv`
+    - `saidas/relatorios/erros_por_baia.png`
+    - `saidas/relatorios/erros_por_camera.png`
 
 
 ---
@@ -894,13 +925,18 @@ Com rejeição (`confianca_min=0.50`):
 
 ## Nota sobre os resultados obtidos:
 
-Como os anotadores não são especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%, é possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
+Pela curva de acurácia treino x validação, é possível perceber que no treino há uma tendência a overfit do modelo iniciando entre 40 e 60 épocas. 
+
+Esta tendência é explicada principalmente por estarmos trabalhando com cerca de 45 imagens pra treino em cada classe, o que é muito pouco. Procurou-se melhorar isso com uso de dados sintéticos (augmentation). Entretanto, ainda são dados sintéticos derivados do original. O uso de mais dados reais por classe (vaca) pode melhorar sensivelmente esse modelo.
+
+Outro ponto fica por conta de os anotadores não serem especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%. É possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
 
 O que é Top 3? Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top 3 > 79% quer dizer que em mais de 79% dos casos o animal correto estava entre os 3 mais bem classificados da lista. A mesma lógica se aplica ao Top 5.
 
-Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no exercício, a identificação exclusiva pelos keypoints.
+Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no enunciado do problema, a identificação exclusiva pelos keypoints do esqueleto.
 
 ---
+
 
 ## Reprodutibilidade
 - Seeds configuráveis em `config.yaml`.
