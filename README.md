@@ -927,13 +927,18 @@ Com rejeição (`confianca_min=0.50`):
 
 Pela curva de acurácia treino x validação, é possível perceber que no treino há uma tendência a overfit do modelo iniciando entre 40 e 60 épocas. 
 
-Esta tendência é explicada principalmente por estarmos trabalhando com cerca de 45 imagens pra treino em cada classe, o que é muito pouco. Procurou-se melhorar isso com uso de dados sintéticos (augmentation). Entretanto, ainda são dados sintéticos derivados do original. O uso de mais dados reais por classe (vaca) pode melhorar sensivelmente esse modelo.
+Esta tendência é explicada principalmente por estarmos trabalhando com cerca de 45 imagens pra treino em cada classe, o que é muito pouco. Procurou-se melhorar isso com uso de dados sintéticos (augmentation). Entretanto, ainda são dados sintéticos derivados do original, potencializando a situação de overfit. O uso de mais dados reais por classe (vaca) pode melhorar sensivelmente esse modelo.
 
-Outro ponto fica por conta de os anotadores não serem especialistas em gado, novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%. É possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
+Os anotadores dos keypoints não são especialistas em gado, são novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%. É possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
 
-O que é Top 3? Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top 3 > 79% quer dizer que em mais de 79% dos casos o animal correto estava entre os 3 mais bem classificados da lista. A mesma lógica se aplica ao Top 5.
+No dataset de classificação há claros erros de anotação fornecidos junto com o enunciado do problema há fortes indícios de fotos de outros animais colocados junto com o animal real da classe, conforme relatado no [Relatório de Análise Exploratória de Dados (EDA)](docs/analise_features.md)
+
 
 Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no enunciado do problema, a identificação exclusiva pelos keypoints do esqueleto.
+
+### O que é Top 3? 
+
+Ao inferir um animal, a inferência é dada por uma lista de possíveis animais e sua porcentagem de ser aquele animal. Top 3 > 79% quer dizer que em mais de 79% dos casos o animal correto estava entre os 3 mais bem classificados da lista. A mesma lógica se aplica ao Top 5.
 
 ---
 
