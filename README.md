@@ -931,7 +931,7 @@ Esta tendência é explicada principalmente por estarmos trabalhando com cerca d
 
 Os anotadores dos keypoints não são especialistas em gado, são novatos como anotadores e  mesmo assim o Top 3 atingiu mais de 79%. É possível esperar sensível melhora caso a qualidade da anotação dos pontos melhore. 
 
-No dataset de classificação há claros erros de anotação fornecidos junto com o enunciado do problema há fortes indícios de fotos de outros animais colocados junto com o animal real da classe, conforme relatado no [Relatório de Análise Exploratória de Dados (EDA)](docs/analise_features.md)
+No dataset de classificação há claros erros de anotação fornecidos junto com o enunciado do problema. Há fortes indícios de que fotos de outros animais foram colocadas junto com o animal real da classe, conforme relatado no [Relatório de Análise Exploratória de Dados (EDA)](docs/analise_features.md)
 
 
 Uma possível melhora também poderia ser obtida, incluindo outras técnicas usadas em reconhecimento de imagens, como Local Binary Patterns, transformando-as em dados numéricos e agregando ao dataset de features. Entretanto, optou-se por manter, como descrito no enunciado do problema, a identificação exclusiva pelos keypoints do esqueleto.
